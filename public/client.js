@@ -226,6 +226,16 @@ window.addEventListener('load', function() {
 		}
 		
 	});//END_SOCKET.ON
+
+	socket.on('RAID_POST_ID', function(id,post_id) {
+	     var raidData = id+':'+post_id;
+		 	
+		 if(window.unityInstance!=null)
+		{
+		   window.unityInstance.SendMessage ('NetworkManager', 'OnReceiveRaidPostId',raidData);
+		}
+		
+	});//END_SOCKET.ON
 	
 
 	

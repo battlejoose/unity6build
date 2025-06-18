@@ -395,6 +395,23 @@ socket.on('GET_USERS_LIST',function(pack){
       
        }
 	});//END_SOCKET_ON
+
+	//create a callback function to handle raid post ID from NetworkManager.cs unity script
+	socket.on('RAID_POST_ID', function (_data)
+	{
+		
+		
+	  var data = JSON.parse(_data);	
+	  
+	  console.log('[RAID_POST_ID] user '+data.id+' set raid post ID: '+data.post_id);
+	  
+	  if(currentUser)
+	  {
+	    // broadcast the raid post ID to all clients including the sender
+       io.emit('RAID_POST_ID', currentUser.id, data.post_id);
+      
+       }
+	});//END_SOCKET_ON
 	
 
 
