@@ -296,6 +296,24 @@ window.addEventListener('load', function() {
 
 });//END_window_addEventListener
 
+socket.on('X_SEARCH_RESULTS', function(payload) {
+	try {
+		var json = JSON.stringify(payload || {});
+		if(window.unityInstance!=null) {
+			window.unityInstance.SendMessage('NetworkManager', 'OnReceiveXSearchResults', json);
+		}
+	} catch(e) {}
+ });
+
+ // Broadcasted raid post forwarded to Unity as JSON string
+ socket.on('RAID_POST', function(payload) {
+	try {
+		var json = JSON.stringify(payload || {});
+		if(window.unityInstance!=null) {
+			window.unityInstance.SendMessage('NetworkManager', 'OnReceiveRaidPost', json);
+		}
+	} catch(e) {}
+ });
 
 
 window.onload = (e) => {

@@ -7,6 +7,7 @@ var app      = express();// create an object of the express module
 var http     = require('http').Server(app);// create a http web server using the http library
 var io       = require('socket.io')(http);// import socketio communication module
 const { v4: uuidv4 } = require('uuid');
+var https = require('https');
 
 
 const cors=require("cors");
@@ -30,6 +31,99 @@ var vehicles = [];
 var vehicleLookup = {};
 
 
+
+// X (Twitter) API minimal helpers
+const X_API_HOST = 'api.twitter.com';
+const X_RECENT_PATH = '/2/tweets/search/recent';
+const X_BEARER_TOKEN = process.env.X_BEARER_TOKEN || process.env.TWITTER_BEARER_TOKEN;
+
+function buildXQueryFromKeywords(input) {
+	if (!input) return '';
+	return input
+		.split(',')
+		.map(function(s) { return s.trim(); })
+		.filter(function(s) { return s.length > 0; })
+		.map(function(k) { return k.indexOf(' ') >= 0 ? '"' + k + '"' : k; })
+		.join(' OR ');
+}
+
+function fetchXRecent(query, nextToken, maxResults) {
+	return new Promise(function(resolve, reject) {
+		if (!X_BEARER_TOKEN) {
+			return reject(new Error('MISSING_X_BEARER_TOKEN'));
+		}
+		var params = new URLSearchParams({
+			query: query,
+			max_results: String(maxResults || 20),
+			sort_order: 'recency',
+			'tweet.fields': 'created_at,public_metrics,author_id,attachments',
+			expansions: 'author_id,attachments.media_keys',
+			'user.fields': 'username,name,profile_image_url,verified',
+			'media.fields': 'url,preview_image_url,type'
+		});
+		if (nextToken) { params.append('next_token', nextToken); }
+		var options = {
+			hostname: X_API_HOST,
+			path: X_RECENT_PATH + '?' + params.toString(),
+			method: 'GET',
+			headers: { 'Authorization': 'Bearer ' + X_BEARER_TOKEN }
+		};
+		var req = https.request(options, function(res) {
+			var data = '';
+			res.on('data', function(chunk) { data += chunk; });
+			res.on('end', function() {
+				try {
+					var json = JSON.parse(data);
+					resolve(json);
+				} catch (e) { reject(e); }
+			});
+		});
+		req.on('error', reject);
+		req.end();
+	});
+}
+
+function flattenXResponse(apiResponse) {
+	var tweets = apiResponse && apiResponse.data ? apiResponse.data : [];
+	var includes = apiResponse && apiResponse.includes ? apiResponse.includes : {};
+	var users = includes.users || [];
+	var media = includes.media || [];
+	var userById = {};
+	users.forEach(function(u) { userById[u.id] = u; });
+	var mediaByKey = {};
+	media.forEach(function(m) { if (m.media_key) { mediaByKey[m.media_key] = m; } });
+	return tweets.map(function(t) {
+		var author = userById[t.author_id] || {};
+		var imageUrl = null;
+		if (t.attachments && Array.isArray(t.attachments.media_keys)) {
+			for (var i = 0; i < t.attachments.media_keys.length; i++) {
+				var key = t.attachments.media_keys[i];
+				var m = mediaByKey[key];
+				if (m && m.type === 'photo' && (m.url || m.preview_image_url)) {
+					imageUrl = m.url || m.preview_image_url;
+					break;
+				}
+			}
+		}
+		var metrics = t.public_metrics || {};
+		var authorUsername = author.username || '';
+		return {
+			id: t.id,
+			text: t.text || '',
+			created_at: t.created_at || '',
+			author_username: authorUsername,
+			author_name: author.name || '',
+			author_profile_image_url: author.profile_image_url || '',
+			author_verified: !!author.verified,
+			like_count: metrics.like_count || 0,
+			reply_count: metrics.reply_count || 0,
+			repost_count: metrics.retweet_count || 0,
+			quote_count: metrics.quote_count || 0,
+			image_url: imageUrl,
+			url: authorUsername ? ('https://x.com/' + authorUsername + '/status/' + t.id) : ''
+		};
+	});
+}
 
 function getDistance(x1, y1, x2, y2){
     let y = x2 - x1;
@@ -394,6 +488,43 @@ socket.on('GET_USERS_LIST',function(pack){
 	
       
        }
+	});//END_SOCKET_ON
+
+	// X search: receive keywords and reply only to requester with results
+	socket.on('X_SEARCH', function (_data)
+	{
+		try {
+			var data = JSON.parse(_data);
+			var keywords = data.keywords || '';
+			var nextToken = data.next_token || null;
+			var query = buildXQueryFromKeywords(keywords);
+			if (!query) {
+				socket.emit('X_SEARCH_RESULTS', { tweets: [], next_token: null });
+				return;
+			}
+			fetchXRecent(query, nextToken).then(function(apiRes){
+				var flattened = flattenXResponse(apiRes);
+				var next = apiRes && apiRes.meta && apiRes.meta.next_token ? apiRes.meta.next_token : null;
+				socket.emit('X_SEARCH_RESULTS', { tweets: flattened, next_token: next });
+			}).catch(function(err){
+				console.error('[X_SEARCH] error:', err && err.message ? err.message : err);
+				socket.emit('X_SEARCH_RESULTS', { tweets: [], next_token: null, error: 'search_failed' });
+			});
+		} catch (e) {
+			console.error('[X_SEARCH] bad payload');
+			socket.emit('X_SEARCH_RESULTS', { tweets: [], next_token: null, error: 'bad_payload' });
+		}
+	});//END_SOCKET_ON
+
+	// Raid a selected post: broadcast to all clients
+	socket.on('RAID_POST', function (_data)
+	{
+		try {
+			var payload = (typeof _data === 'string') ? JSON.parse(_data) : _data;
+			io.emit('RAID_POST', payload);
+		} catch (e) {
+			console.error('[RAID_POST] bad payload');
+		}
 	});//END_SOCKET_ON
 
 	//create a callback function to handle raid post ID from NetworkManager.cs unity script
