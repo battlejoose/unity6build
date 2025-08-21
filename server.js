@@ -56,8 +56,8 @@ function fetchXRecent(query, nextToken, maxResults) {
 			query: query,
 			max_results: String(maxResults || 20),
 			sort_order: 'recency',
-			'tweet.fields': 'created_at,public_metrics,author_id,attachments',
-			expansions: 'author_id,attachments.media_keys',
+			'tweet.fields': 'created_at,public_metrics,author_id,attachments,referenced_tweets',
+			expansions: 'author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id',
 			'user.fields': 'username,name,profile_image_url,verified',
 			'media.fields': 'url,preview_image_url,type'
 		});
@@ -88,10 +88,13 @@ function flattenXResponse(apiResponse) {
 	var includes = apiResponse && apiResponse.includes ? apiResponse.includes : {};
 	var users = includes.users || [];
 	var media = includes.media || [];
+	var referenced = includes.tweets || [];
 	var userById = {};
 	users.forEach(function(u) { userById[u.id] = u; });
 	var mediaByKey = {};
 	media.forEach(function(m) { if (m.media_key) { mediaByKey[m.media_key] = m; } });
+	var tweetById = {};
+	referenced.forEach(function(rt) { tweetById[rt.id] = rt; });
 	return tweets.map(function(t) {
 		var author = userById[t.author_id] || {};
 		var imageUrl = null;
@@ -106,6 +109,19 @@ function flattenXResponse(apiResponse) {
 			}
 		}
 		var metrics = t.public_metrics || {};
+		// If this is a retweet, use the original tweet's metrics when available
+		if (Array.isArray(t.referenced_tweets)) {
+			for (var j = 0; j < t.referenced_tweets.length; j++) {
+				var ref = t.referenced_tweets[j];
+				if (ref && (ref.type === 'retweeted' || ref.type === 'quoted' || ref.type === 'replied_to')) {
+					var original = tweetById[ref.id];
+					if (original && original.public_metrics) {
+						metrics = original.public_metrics;
+						break;
+					}
+				}
+			}
+		}
 		var authorUsername = author.username || '';
 		return {
 			id: t.id,
