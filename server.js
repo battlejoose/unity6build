@@ -32,6 +32,9 @@ var vehicleLookup = {};
 
 
 
+// Track tweets that have already been raided to avoid duplicates
+var raidedTweetIds = {};
+
 // X (Twitter) API minimal helpers
 const X_API_HOST = 'api.twitter.com';
 const X_RECENT_PATH = '/2/tweets/search/recent';
@@ -537,6 +540,10 @@ socket.on('GET_USERS_LIST',function(pack){
 	{
 		try {
 			var payload = (typeof _data === 'string') ? JSON.parse(_data) : _data;
+			var tid = payload && payload.id ? String(payload.id) : '';
+			if (!tid) { return; }
+			if (raidedTweetIds[tid]) { return; }
+			raidedTweetIds[tid] = true;
 			io.emit('RAID_POST', payload);
 		} catch (e) {
 			console.error('[RAID_POST] bad payload');
