@@ -59,7 +59,7 @@ function fetchXRecent(query, nextToken, maxResults) {
 		}
 		var params = new URLSearchParams({
 			query: query,
-			max_results: String(maxResults || 20),
+			max_results: String(maxResults || 100),
 			sort_order: 'recency',
 			'tweet.fields': 'created_at,public_metrics,author_id,attachments,referenced_tweets',
 			expansions: 'author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id',
@@ -546,7 +546,7 @@ socket.on('GET_USERS_LIST',function(pack){
 				return;
 			}
 			fetchXRecent(query, nextToken).then(function(apiRes){
-				var flattened = flattenXResponse(apiRes);
+				var flattened = flattenXResponse(apiRes).slice(0, 20);
 				var next = apiRes && apiRes.meta && apiRes.meta.next_token ? apiRes.meta.next_token : null;
 				socket.emit('X_SEARCH_RESULTS', { tweets: flattened, next_token: next });
 			}).catch(function(err){
