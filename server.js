@@ -42,12 +42,14 @@ const X_BEARER_TOKEN = process.env.X_BEARER_TOKEN || process.env.TWITTER_BEARER_
 
 function buildXQueryFromKeywords(input) {
 	if (!input) return '';
-	return input
+	var core = input
 		.split(',')
 		.map(function(s) { return s.trim(); })
 		.filter(function(s) { return s.length > 0; })
 		.map(function(k) { return k.indexOf(' ') >= 0 ? '"' + k + '"' : k; })
 		.join(' OR ');
+	if (!core) return '';
+	return '(' + core + ') -is:retweet';
 }
 
 function fetchXRecent(query, nextToken, maxResults) {
