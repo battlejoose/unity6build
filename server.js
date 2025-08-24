@@ -63,7 +63,7 @@ function fetchXRecent(query, nextToken, maxResults) {
 			sort_order: 'recency',
 			'tweet.fields': 'created_at,public_metrics,author_id,attachments,referenced_tweets',
 			expansions: 'author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id',
-			'user.fields': 'username,name,profile_image_url,verified',
+			'user.fields': 'username,name,profile_image_url,verified,public_metrics',
 			'media.fields': 'url,preview_image_url,type'
 		});
 		if (nextToken) { params.append('next_token', nextToken); }
@@ -128,6 +128,10 @@ function flattenXResponse(apiResponse) {
 			}
 		}
 		var authorUsername = author.username || '';
+		var followers = 0;
+		if (author && author.public_metrics && typeof author.public_metrics.followers_count === 'number') {
+			followers = author.public_metrics.followers_count;
+		}
 		var createdMs = t.created_at ? Date.parse(t.created_at) : NaN;
 		var ageSeconds = isNaN(createdMs) ? null : Math.floor((Date.now() - createdMs) / 1000);
 		var ageText = '';
@@ -147,6 +151,7 @@ function flattenXResponse(apiResponse) {
 			author_name: author.name || '',
 			author_profile_image_url: author.profile_image_url || '',
 			author_verified: !!author.verified,
+			followers_count: followers,
 			like_count: metrics.like_count || 0,
 			reply_count: metrics.reply_count || 0,
 			repost_count: metrics.retweet_count || 0,
