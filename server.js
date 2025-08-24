@@ -143,6 +143,10 @@ function flattenXResponse(apiResponse) {
 			else if (h > 0) ageText = h + 'h' + m + 'm';
 			else ageText = Math.max(1, m) + 'm';
 		}
+		// Filter: only include authors with > 1000 followers
+		if (followers <= 1000) {
+			return null;
+		}
 		return {
 			id: t.id,
 			text: t.text || '',
@@ -161,7 +165,7 @@ function flattenXResponse(apiResponse) {
 			age_seconds: ageSeconds,
 			age_text: ageText
 		};
-	});
+	}).filter(function(x){ return x != null; });
 }
 
 function getDistance(x1, y1, x2, y2){
