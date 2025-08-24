@@ -128,6 +128,15 @@ function flattenXResponse(apiResponse) {
 		var authorUsername = author.username || '';
 		var createdMs = t.created_at ? Date.parse(t.created_at) : NaN;
 		var ageSeconds = isNaN(createdMs) ? null : Math.floor((Date.now() - createdMs) / 1000);
+		var ageText = '';
+		if (typeof ageSeconds === 'number' && ageSeconds >= 0) {
+			var d = Math.floor(ageSeconds / 86400);
+			var h = Math.floor((ageSeconds % 86400) / 3600);
+			var m = Math.floor((ageSeconds % 3600) / 60);
+			if (d > 0) ageText = d + 'd' + h + 'h' + m + 'm';
+			else if (h > 0) ageText = h + 'h' + m + 'm';
+			else ageText = Math.max(1, m) + 'm';
+		}
 		return {
 			id: t.id,
 			text: t.text || '',
@@ -142,7 +151,8 @@ function flattenXResponse(apiResponse) {
 			quote_count: metrics.quote_count || 0,
 			image_url: imageUrl,
 			url: authorUsername ? ('https://x.com/' + authorUsername + '/status/' + t.id) : '',
-			age_seconds: ageSeconds
+			age_seconds: ageSeconds,
+			age_text: ageText
 		};
 	});
 }
