@@ -126,6 +126,8 @@ function flattenXResponse(apiResponse) {
 			}
 		}
 		var authorUsername = author.username || '';
+		var createdMs = t.created_at ? Date.parse(t.created_at) : NaN;
+		var ageSeconds = isNaN(createdMs) ? null : Math.floor((Date.now() - createdMs) / 1000);
 		return {
 			id: t.id,
 			text: t.text || '',
@@ -139,7 +141,8 @@ function flattenXResponse(apiResponse) {
 			repost_count: metrics.retweet_count || 0,
 			quote_count: metrics.quote_count || 0,
 			image_url: imageUrl,
-			url: authorUsername ? ('https://x.com/' + authorUsername + '/status/' + t.id) : ''
+			url: authorUsername ? ('https://x.com/' + authorUsername + '/status/' + t.id) : '',
+			age_seconds: ageSeconds
 		};
 	});
 }
