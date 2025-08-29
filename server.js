@@ -49,7 +49,7 @@ function buildXQueryFromKeywords(input) {
 		.map(function(k) { return k.indexOf(' ') >= 0 ? '"' + k + '"' : k; })
 		.join(' OR ');
 	if (!core) return '';
-	return '(' + core + ') -is:retweet';
+	return '(' + core + ') -is:retweet -is:reply';
 }
 
 function fetchXRecent(query, nextToken, maxResults) {
