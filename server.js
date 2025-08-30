@@ -45,6 +45,7 @@ const X_BEARER_TOKEN = process.env.X_BEARER_TOKEN || process.env.TWITTER_BEARER_
 
 // OpenAI config
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.CHATGPT_API_KEY || process.env.OPENAI_KEY;
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const CHARACTER_FILE = process.env.CHARACTER_FILE || path.join(__dirname, 'character.txt');
 let CHARACTER_PROMPT = '';
 try {
@@ -61,9 +62,9 @@ function callOpenAIChat(systemPrompt, userPrompt) {
             return reject(new Error('MISSING_OPENAI_API_KEY'));
         }
         var payload = JSON.stringify({
-            model: 'gpt-4o-mini',
-            temperature: 0.7,
-            max_tokens: 80,
+            model: OPENAI_MODEL,
+            temperature: 0.3,
+            max_tokens: 64,
             messages: [
                 { role: 'system', content: systemPrompt || '' },
                 { role: 'user', content: userPrompt || '' }
@@ -648,13 +649,21 @@ socket.on('GET_USERS_LIST',function(pack){
 			var tweetAuthor = data && data.author ? String(data.author) : '';
 			var tweetId = data && data.tweetId ? String(data.tweetId) : '';
 			console.log('[GENERATE_REPLY] from', socket.id, 'tweetId:', tweetId, 'author:', tweetAuthor, 'text.len:', tweetText.length);
-			var systemPrompt = CHARACTER_PROMPT || 'You are a helpful assistant. Write a concise, on-topic reply.';
-			var userPrompt = 'Tweet by ' + tweetAuthor + ':\n"' + tweetText + '"\n\nWrite a short, natural reply appropriate for X. Avoid hashtags and @ mentions unless essential.';
+			var systemPrompt = (CHARACTER_PROMPT || 'You are a helpful assistant for social replies.') + ' Keep answers safe for work.';
+			var userPrompt = 'Tweet by ' + tweetAuthor + ':\n"' + tweetText + '"\n\nTask: Write a single-sentence reply for X, natural tone, no hashtags, avoid @ mentions unless essential. Target length ~100 characters.';
 			callOpenAIChat(systemPrompt, userPrompt).then(function(reply){
+				// sanitize and length-tune
+				reply = (reply || '').replace(/\s+/g,' ').trim();
+				if (reply.length > 100) {
+					var cut = reply.substring(0, 100);
+					var lastSpace = cut.lastIndexOf(' ');
+					if (lastSpace > 60) cut = cut.substring(0, lastSpace);
+					reply = cut.trim();
+				}
 				if (!reply || reply.length === 0) {
 					reply = buildFallbackReply(tweetAuthor, tweetText);
 				}
-				console.log('[GENERATE_REPLY] success for tweetId:', tweetId, 'reply.len:', reply ? reply.length : 0);
+				console.log('[GENERATE_REPLY] success for tweetId:', tweetId, 'reply.len:', reply ? reply.length : 0, 'reply:', reply);
 				socket.emit('GENERATE_REPLY_RESULT', { ok:true, reply: reply, tweetId: tweetId });
 			}).catch(function(err){
 				console.error('[GENERATE_REPLY] error:', err && err.message ? err.message : err);
