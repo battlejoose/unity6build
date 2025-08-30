@@ -63,6 +63,7 @@ function callOpenAIChat(systemPrompt, userPrompt) {
         var payload = JSON.stringify({
             model: 'gpt-4o-mini',
             temperature: 0.7,
+            max_tokens: 80,
             messages: [
                 { role: 'system', content: systemPrompt || '' },
                 { role: 'user', content: userPrompt || '' }
@@ -85,6 +86,9 @@ function callOpenAIChat(systemPrompt, userPrompt) {
                 try {
                     var json = JSON.parse(data);
                     var text = (json && json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) ? json.choices[0].message.content.trim() : '';
+                    if (!text || text.length === 0) {
+                        console.log('[OPENAI] empty content status:', res.statusCode, 'body:', data.substring(0, 256));
+                    }
                     resolve(text);
                 } catch (e) { reject(e); }
             });
