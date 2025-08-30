@@ -8,6 +8,8 @@ var http     = require('http').Server(app);// create a http web server using the
 var io       = require('socket.io')(http);// import socketio communication module
 const { v4: uuidv4 } = require('uuid');
 var https = require('https');
+var fs = require('fs');
+var path = require('path');
 
 
 const cors=require("cors");
@@ -22,6 +24,7 @@ app.use(cors(corsOptions)) // Use this after the variable declaration
 app.use("/public/TemplateData",express.static(__dirname + "/public/TemplateData"));
 app.use("/public/Build",express.static(__dirname + "/public/Build"));
 app.use(express.static(__dirname+'/public'));
+app.use(express.json());
 
 var clients			= [];// to storage clients
 var clientLookup = {};// clients search engine
@@ -39,6 +42,58 @@ var raidedTweetIds = {};
 const X_API_HOST = 'api.twitter.com';
 const X_RECENT_PATH = '/2/tweets/search/recent';
 const X_BEARER_TOKEN = process.env.X_BEARER_TOKEN || process.env.TWITTER_BEARER_TOKEN;
+
+// OpenAI config
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.CHATGPT_API_KEY || process.env.OPENAI_KEY;
+const CHARACTER_FILE = process.env.CHARACTER_FILE || path.join(__dirname, 'character.txt');
+let CHARACTER_PROMPT = '';
+try {
+    if (fs.existsSync(CHARACTER_FILE)) {
+        CHARACTER_PROMPT = fs.readFileSync(CHARACTER_FILE, 'utf8');
+    }
+} catch (e) {
+    CHARACTER_PROMPT = '';
+}
+
+function callOpenAIChat(systemPrompt, userPrompt) {
+    return new Promise(function(resolve, reject) {
+        if (!OPENAI_API_KEY) {
+            return reject(new Error('MISSING_OPENAI_API_KEY'));
+        }
+        var payload = JSON.stringify({
+            model: 'gpt-4o-mini',
+            temperature: 0.7,
+            messages: [
+                { role: 'system', content: systemPrompt || '' },
+                { role: 'user', content: userPrompt || '' }
+            ]
+        });
+        var options = {
+            hostname: 'api.openai.com',
+            path: '/v1/chat/completions',
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + OPENAI_API_KEY,
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(payload)
+            }
+        };
+        var req = https.request(options, function(res) {
+            var data = '';
+            res.on('data', function(chunk) { data += chunk; });
+            res.on('end', function() {
+                try {
+                    var json = JSON.parse(data);
+                    var text = (json && json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) ? json.choices[0].message.content.trim() : '';
+                    resolve(text);
+                } catch (e) { reject(e); }
+            });
+        });
+        req.on('error', reject);
+        req.write(payload);
+        req.end();
+    });
+}
 
 function buildXQueryFromKeywords(input) {
 	if (!input) return '';
@@ -573,6 +628,24 @@ socket.on('GET_USERS_LIST',function(pack){
 			console.error('[RAID_POST] bad payload');
 		}
 	});//END_SOCKET_ON
+
+	// Generate GPT reply text server-side based on tweet content and character prompt
+	socket.on('GENERATE_REPLY', function(_data){
+		try {
+			var data = (typeof _data === 'string') ? JSON.parse(_data) : _data;
+			var tweetText = data && data.text ? String(data.text) : '';
+			var tweetAuthor = data && data.author ? String(data.author) : '';
+			var systemPrompt = CHARACTER_PROMPT || 'You are a helpful assistant. Write a concise, on-topic reply.';
+			var userPrompt = 'Tweet by ' + tweetAuthor + ':\n"' + tweetText + '"\n\nWrite a short, natural reply appropriate for X. Avoid hashtags and @ mentions unless essential.';
+			callOpenAIChat(systemPrompt, userPrompt).then(function(reply){
+				socket.emit('GENERATE_REPLY_RESULT', { ok:true, reply: reply });
+			}).catch(function(err){
+				socket.emit('GENERATE_REPLY_RESULT', { ok:false, error:'gpt_failed' });
+			});
+		} catch(e) {
+			socket.emit('GENERATE_REPLY_RESULT', { ok:false, error:'bad_payload' });
+		}
+	});
 
 	//create a callback function to handle raid post ID from NetworkManager.cs unity script
 	socket.on('RAID_POST_ID', function (_data)
