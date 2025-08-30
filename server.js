@@ -635,15 +635,20 @@ socket.on('GET_USERS_LIST',function(pack){
 			var data = (typeof _data === 'string') ? JSON.parse(_data) : _data;
 			var tweetText = data && data.text ? String(data.text) : '';
 			var tweetAuthor = data && data.author ? String(data.author) : '';
+			var tweetId = data && data.tweetId ? String(data.tweetId) : '';
+			console.log('[GENERATE_REPLY] from', socket.id, 'tweetId:', tweetId, 'author:', tweetAuthor, 'text.len:', tweetText.length);
 			var systemPrompt = CHARACTER_PROMPT || 'You are a helpful assistant. Write a concise, on-topic reply.';
 			var userPrompt = 'Tweet by ' + tweetAuthor + ':\n"' + tweetText + '"\n\nWrite a short, natural reply appropriate for X. Avoid hashtags and @ mentions unless essential.';
 			callOpenAIChat(systemPrompt, userPrompt).then(function(reply){
-				socket.emit('GENERATE_REPLY_RESULT', { ok:true, reply: reply });
+				console.log('[GENERATE_REPLY] success for tweetId:', tweetId, 'reply.len:', reply ? reply.length : 0);
+				socket.emit('GENERATE_REPLY_RESULT', { ok:true, reply: reply, tweetId: tweetId });
 			}).catch(function(err){
-				socket.emit('GENERATE_REPLY_RESULT', { ok:false, error:'gpt_failed' });
+				console.error('[GENERATE_REPLY] error:', err && err.message ? err.message : err);
+				socket.emit('GENERATE_REPLY_RESULT', { ok:false, error:'gpt_failed', tweetId: tweetId });
 			});
 		} catch(e) {
-			socket.emit('GENERATE_REPLY_RESULT', { ok:false, error:'bad_payload' });
+			console.error('[GENERATE_REPLY] bad payload');
+			socket.emit('GENERATE_REPLY_RESULT', { ok:false, error:'bad_payload', tweetId: '' });
 		}
 	});
 

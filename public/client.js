@@ -310,14 +310,15 @@ window.addEventListener('load', function() {
 		} catch(e) {}
 	 });//END_SOCKET.ON
 	
-	 	 // Forward GPT reply back to Unity
+	 // Forward GPT reply back to Unity
 	 socket.on('GENERATE_REPLY_RESULT', function(payload) {
 		try {
 			var json = JSON.stringify(payload || {});
+			console.log('[GENERATE_REPLY_RESULT] payload:', json);
 			if(window.unityInstance!=null) {
 				window.unityInstance.SendMessage('NetworkManager', 'OnReceiveGeneratedReply', json);
 			}
-		} catch(e) {}
+		} catch(e) { console.error('[GENERATE_REPLY_RESULT] err', e); }
 	 });
 
 
