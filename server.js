@@ -99,6 +99,13 @@ function callOpenAIChat(systemPrompt, userPrompt) {
     });
 }
 
+function buildFallbackReply(author, text) {
+    // Simple, safe, short default when OpenAI is unavailable
+    var snippet = (text || '').replace(/\s+/g,' ').trim();
+    if (snippet.length > 120) snippet = snippet.substring(0, 117) + '...';
+    return (author ? ('@' + author + ' ') : '') + 'Appreciate the update — thanks for sharing.';
+}
+
 function buildXQueryFromKeywords(input) {
 	if (!input) return '';
 	var core = input
@@ -644,11 +651,15 @@ socket.on('GET_USERS_LIST',function(pack){
 			var systemPrompt = CHARACTER_PROMPT || 'You are a helpful assistant. Write a concise, on-topic reply.';
 			var userPrompt = 'Tweet by ' + tweetAuthor + ':\n"' + tweetText + '"\n\nWrite a short, natural reply appropriate for X. Avoid hashtags and @ mentions unless essential.';
 			callOpenAIChat(systemPrompt, userPrompt).then(function(reply){
+				if (!reply || reply.length === 0) {
+					reply = buildFallbackReply(tweetAuthor, tweetText);
+				}
 				console.log('[GENERATE_REPLY] success for tweetId:', tweetId, 'reply.len:', reply ? reply.length : 0);
 				socket.emit('GENERATE_REPLY_RESULT', { ok:true, reply: reply, tweetId: tweetId });
 			}).catch(function(err){
 				console.error('[GENERATE_REPLY] error:', err && err.message ? err.message : err);
-				socket.emit('GENERATE_REPLY_RESULT', { ok:false, error:'gpt_failed', tweetId: tweetId });
+				var fb = buildFallbackReply(tweetAuthor, tweetText);
+				socket.emit('GENERATE_REPLY_RESULT', { ok:true, reply: fb, tweetId: tweetId });
 			});
 		} catch(e) {
 			console.error('[GENERATE_REPLY] bad payload');
