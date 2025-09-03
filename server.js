@@ -40,7 +40,7 @@ var vehicleLookup = {};
 var raidedTweetIds = {};
 
 // X (Twitter) API minimal helpers
-const X_API_HOST = 'api.twitter.com';
+const X_API_HOST = 'api.x.com';
 const X_RECENT_PATH = '/2/tweets/search/recent';
 const X_BEARER_TOKEN = process.env.X_BEARER_TOKEN || process.env.TWITTER_BEARER_TOKEN;
 
@@ -140,7 +140,7 @@ app.get('/x/oauth/callback', function(req, res){
         if(!token_secret){ return res.status(400).send('Unknown token'); }
 
         var method = 'POST';
-        var url = 'https://api.twitter.com/oauth/access_token';
+        var url = 'https://api.x.com/oauth/access_token';
         var oauthParams = {
             oauth_consumer_key: X_OAUTH1_CONSUMER_KEY,
             oauth_nonce: crypto.randomBytes(16).toString('hex'),
@@ -159,7 +159,7 @@ app.get('/x/oauth/callback', function(req, res){
         var authHeader = 'OAuth ' + Object.keys(oauthParams).filter(function(k){return k!=='oauth_verifier';}).map(function(k){ return percentEncode(k)+'="'+percentEncode(oauthParams[k])+'"';}).join(', ');
         var body = 'oauth_verifier='+percentEncode(oauth_verifier);
         var opt = {
-            hostname: 'api.twitter.com',
+            hostname: 'api.x.com',
             path: '/oauth/access_token',
             method: 'POST',
             headers: { 'Authorization': authHeader, 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) }
@@ -713,23 +713,24 @@ socket.on('GET_USERS_LIST',function(pack){
 				return;
 			}
 			var method = 'POST';
-			var url = 'https://api.twitter.com/oauth/request_token';
+			var url = 'https://api.x.com/oauth/request_token';
 			var callback = APP_BASE_URL + '/x/oauth/callback';
-			var oauthParams = {
-				oauth_callback: callback,
+			// Build signature with oauth_callback included
+			var headerParams = {
 				oauth_consumer_key: X_OAUTH1_CONSUMER_KEY,
 				oauth_nonce: crypto.randomBytes(16).toString('hex'),
 				oauth_signature_method: 'HMAC-SHA1',
 				oauth_timestamp: Math.floor(Date.now()/1000).toString(),
 				oauth_version: '1.0'
 			};
-			var baseParams = Object.assign({}, oauthParams);
+			var baseParams = Object.assign({ oauth_callback: callback }, headerParams);
 			var baseString = buildSignatureBase(method, url, baseParams);
 			var signingKey = percentEncode(X_OAUTH1_CONSUMER_SECRET)+'&';
 			var signature = hmacSha1(signingKey, baseString);
-			oauthParams.oauth_signature = signature;
-			var authHeader = 'OAuth ' + Object.keys(oauthParams).map(function(k){ return percentEncode(k)+'="'+percentEncode(oauthParams[k])+'"';}).join(', ');
-			var opt = { hostname:'api.twitter.com', path:'/oauth/request_token', method:'POST', headers:{ 'Authorization': authHeader } };
+			headerParams.oauth_signature = signature;
+			var authHeader = 'OAuth ' + Object.keys(headerParams).map(function(k){ return percentEncode(k)+'="'+percentEncode(headerParams[k])+'"';}).join(', ');
+			var body = 'oauth_callback='+percentEncode(callback);
+			var opt = { hostname:'api.x.com', path:'/oauth/request_token', method:'POST', headers:{ 'Authorization': authHeader, 'Content-Type':'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) } };
 			var rq = https.request(opt, function(rs){
 				var buf='';
 				rs.on('data', function(c){ buf+=c; });
@@ -745,13 +746,14 @@ socket.on('GET_USERS_LIST',function(pack){
 						var oauth_token_secret = parts.oauth_token_secret;
 						oauthTokenToSecret[oauth_token] = oauth_token_secret;
 						oauthTokenToSocket[oauth_token] = socket.id;
-						var redirectUrl = 'https://api.twitter.com/oauth/authenticate?oauth_token=' + oauth_token;
+						var redirectUrl = 'https://api.x.com/oauth/authenticate?oauth_token=' + oauth_token;
 						console.log('[X_AUTH_START] auth url ready');
 						socket.emit('X_AUTH_URL', { ok:true, url: redirectUrl });
 					}catch(e){ console.error('[X_AUTH_START] parse_error', e); socket.emit('X_AUTH_URL', { ok:false, error:'parse_error' }); }
 				});
 			});
 			rq.on('error', function(err){ console.error('[X_AUTH_START] request_error', err && err.message ? err.message : err); socket.emit('X_AUTH_URL', { ok:false, error:'request_error' }); });
+			rq.write(body);
 			rq.end();
 		}catch(e){ console.error('[X_AUTH_START] internal_error', e && e.message ? e.message : e); socket.emit('X_AUTH_URL', { ok:false, error:'internal_error' }); }
 	});
