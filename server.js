@@ -10,6 +10,7 @@ const { v4: uuidv4 } = require('uuid');
 var https = require('https');
 var fs = require('fs');
 var path = require('path');
+var crypto = require('crypto');
 
 
 const cors=require("cors");
@@ -107,6 +108,82 @@ function buildFallbackReply(author, text) {
     return (author ? ('@' + author + ' ') : '') + 'Appreciate the update — thanks for sharing.';
 }
 
+// ===== X OAuth 1.0a Sign in (Log in with X) =====
+const X_OAUTH1_CONSUMER_KEY = process.env.X_OAUTH1_CONSUMER_KEY || process.env.X_CONSUMER_KEY || '';
+const X_OAUTH1_CONSUMER_SECRET = process.env.X_OAUTH1_CONSUMER_SECRET || process.env.X_CONSUMER_SECRET || '';
+const APP_BASE_URL = process.env.APP_BASE_URL || '';
+
+var oauthTokenToSecret = {};// oauth_token -> token_secret
+var oauthTokenToSocket = {};// oauth_token -> socketId
+
+function percentEncode(str){
+    return encodeURIComponent(str).replace(/[!*'()]/g, function(c){return '%'+c.charCodeAt(0).toString(16).toUpperCase();});
+}
+
+function buildSignatureBase(method, baseUrl, paramsObj){
+    var keys = Object.keys(paramsObj).sort();
+    var paramString = keys.map(function(k){ return percentEncode(k)+'='+percentEncode(paramsObj[k]); }).join('&');
+    return [method.toUpperCase(), percentEncode(baseUrl), percentEncode(paramString)].join('&');
+}
+
+function hmacSha1(key, base){
+    return crypto.createHmac('sha1', key).update(base).digest('base64');
+}
+
+app.get('/x/oauth/callback', function(req, res){
+    try{
+        var oauth_token = req.query.oauth_token || '';
+        var oauth_verifier = req.query.oauth_verifier || '';
+        if(!oauth_token || !oauth_verifier){ return res.status(400).send('Missing parameters'); }
+        var token_secret = oauthTokenToSecret[oauth_token];
+        var socketId = oauthTokenToSocket[oauth_token];
+        if(!token_secret){ return res.status(400).send('Unknown token'); }
+
+        var method = 'POST';
+        var url = 'https://api.twitter.com/oauth/access_token';
+        var oauthParams = {
+            oauth_consumer_key: X_OAUTH1_CONSUMER_KEY,
+            oauth_nonce: crypto.randomBytes(16).toString('hex'),
+            oauth_signature_method: 'HMAC-SHA1',
+            oauth_timestamp: Math.floor(Date.now()/1000).toString(),
+            oauth_token: oauth_token,
+            oauth_version: '1.0',
+            oauth_verifier: oauth_verifier
+        };
+        var baseParams = Object.assign({}, oauthParams);
+        var baseString = buildSignatureBase(method, url, baseParams);
+        var signingKey = percentEncode(X_OAUTH1_CONSUMER_SECRET)+'&'+percentEncode(token_secret);
+        var signature = hmacSha1(signingKey, baseString);
+        oauthParams.oauth_signature = signature;
+
+        var authHeader = 'OAuth ' + Object.keys(oauthParams).filter(function(k){return k!=='oauth_verifier';}).map(function(k){ return percentEncode(k)+'="'+percentEncode(oauthParams[k])+'"';}).join(', ');
+        var body = 'oauth_verifier='+percentEncode(oauth_verifier);
+        var opt = {
+            hostname: 'api.twitter.com',
+            path: '/oauth/access_token',
+            method: 'POST',
+            headers: { 'Authorization': authHeader, 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) }
+        };
+        var rq = https.request(opt, function(rs){
+            var buf='';
+            rs.on('data', function(c){ buf+=c; });
+            rs.on('end', function(){
+                try{
+                    var parts = {};
+                    buf.split('&').forEach(function(p){ var kv=p.split('='); parts[kv[0]]=kv[1]; });
+                    var screen_name = decodeURIComponent(parts.screen_name || '');
+                    if (socketId && sockets[socketId]) {
+                        sockets[socketId].emit('X_AUTH_SUCCESS', { username: screen_name });
+                    }
+                    res.status(200).send('<html><body>Authorized as @'+screen_name+'. You can close this tab.</body></html>');
+                }catch(e){ console.error('[X_OAUTH] access_token parse error', buf); res.status(500).send('Access token parse error'); }
+            });
+        });
+        rq.on('error', function(){ res.status(500).send('Access token request error'); });
+        rq.write(body);
+        rq.end();
+    }catch(e){ res.status(500).send('Callback error'); }
+});
 function buildXQueryFromKeywords(input) {
 	if (!input) return '';
 	var core = input
@@ -625,6 +702,53 @@ socket.on('GET_USERS_LIST',function(pack){
 			socket.emit('X_SEARCH_RESULTS', { tweets: [], next_token: null, error: 'bad_payload' });
 		}
 	});//END_SOCKET_ON
+
+	// Begin OAuth 1.0a: provide request token and redirect URL
+	socket.on('X_AUTH_START', function(){
+		try{
+			if (!X_OAUTH1_CONSUMER_KEY || !X_OAUTH1_CONSUMER_SECRET || !APP_BASE_URL){
+				socket.emit('X_AUTH_URL', { ok:false, error:'server_not_configured' });
+				return;
+			}
+			var method = 'POST';
+			var url = 'https://api.twitter.com/oauth/request_token';
+			var callback = APP_BASE_URL + '/x/oauth/callback';
+			var oauthParams = {
+				oauth_callback: callback,
+				oauth_consumer_key: X_OAUTH1_CONSUMER_KEY,
+				oauth_nonce: crypto.randomBytes(16).toString('hex'),
+				oauth_signature_method: 'HMAC-SHA1',
+				oauth_timestamp: Math.floor(Date.now()/1000).toString(),
+				oauth_version: '1.0'
+			};
+			var baseParams = Object.assign({}, oauthParams);
+			var baseString = buildSignatureBase(method, url, baseParams);
+			var signingKey = percentEncode(X_OAUTH1_CONSUMER_SECRET)+'&';
+			var signature = hmacSha1(signingKey, baseString);
+			oauthParams.oauth_signature = signature;
+			var authHeader = 'OAuth ' + Object.keys(oauthParams).map(function(k){ return percentEncode(k)+'="'+percentEncode(oauthParams[k])+'"';}).join(', ');
+			var opt = { hostname:'api.twitter.com', path:'/oauth/request_token', method:'POST', headers:{ 'Authorization': authHeader } };
+			var rq = https.request(opt, function(rs){
+				var buf='';
+				rs.on('data', function(c){ buf+=c; });
+				rs.on('end', function(){
+					try{
+						var parts = {};
+						buf.split('&').forEach(function(p){ var kv=p.split('='); parts[kv[0]]=kv[1]; });
+						if (parts.oauth_callback_confirmed !== 'true') return socket.emit('X_AUTH_URL', { ok:false, error:'callback_not_confirmed' });
+						var oauth_token = parts.oauth_token;
+						var oauth_token_secret = parts.oauth_token_secret;
+						oauthTokenToSecret[oauth_token] = oauth_token_secret;
+						oauthTokenToSocket[oauth_token] = socket.id;
+						var redirectUrl = 'https://api.twitter.com/oauth/authenticate?oauth_token=' + oauth_token;
+						socket.emit('X_AUTH_URL', { ok:true, url: redirectUrl });
+					}catch(e){ socket.emit('X_AUTH_URL', { ok:false, error:'parse_error' }); }
+				});
+			});
+			rq.on('error', function(){ socket.emit('X_AUTH_URL', { ok:false, error:'request_error' }); });
+			rq.end();
+		}catch(e){ socket.emit('X_AUTH_URL', { ok:false, error:'internal_error' }); }
+	});
 
 	// Raid a selected post: broadcast to all clients
 	socket.on('RAID_POST', function (_data)

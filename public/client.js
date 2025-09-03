@@ -321,6 +321,26 @@ window.addEventListener('load', function() {
 		} catch(e) { console.error('[GENERATE_REPLY_RESULT] err', e); }
 	 });
 
+	 	// X OAuth: receive authorization URL
+	socket.on('X_AUTH_URL', function(payload) {
+		try {
+			var url = (payload && payload.url) ? payload.url : '';
+			if (url && window && window.open) {
+				window.open(url, '_blank');
+			}
+		} catch(e) {}
+	});
+
+	// X OAuth: success with username
+	socket.on('X_AUTH_SUCCESS', function(payload) {
+		try {
+			var json = JSON.stringify(payload || {});
+			if(window.unityInstance!=null) {
+				window.unityInstance.SendMessage('NetworkManager', 'OnXAuthSuccess', json);
+			}
+		} catch(e) {}
+	});
+
 
 	
 
