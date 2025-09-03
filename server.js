@@ -706,7 +706,9 @@ socket.on('GET_USERS_LIST',function(pack){
 	// Begin OAuth 1.0a: provide request token and redirect URL
 	socket.on('X_AUTH_START', function(){
 		try{
+			console.log('[X_AUTH_START] from', socket.id);
 			if (!X_OAUTH1_CONSUMER_KEY || !X_OAUTH1_CONSUMER_SECRET || !APP_BASE_URL){
+				console.error('[X_AUTH_START] server_not_configured');
 				socket.emit('X_AUTH_URL', { ok:false, error:'server_not_configured' });
 				return;
 			}
@@ -735,19 +737,23 @@ socket.on('GET_USERS_LIST',function(pack){
 					try{
 						var parts = {};
 						buf.split('&').forEach(function(p){ var kv=p.split('='); parts[kv[0]]=kv[1]; });
-						if (parts.oauth_callback_confirmed !== 'true') return socket.emit('X_AUTH_URL', { ok:false, error:'callback_not_confirmed' });
+						if (parts.oauth_callback_confirmed !== 'true') {
+							console.error('[X_AUTH_START] callback_not_confirmed', buf);
+							return socket.emit('X_AUTH_URL', { ok:false, error:'callback_not_confirmed' });
+						}
 						var oauth_token = parts.oauth_token;
 						var oauth_token_secret = parts.oauth_token_secret;
 						oauthTokenToSecret[oauth_token] = oauth_token_secret;
 						oauthTokenToSocket[oauth_token] = socket.id;
 						var redirectUrl = 'https://api.twitter.com/oauth/authenticate?oauth_token=' + oauth_token;
+						console.log('[X_AUTH_START] auth url ready');
 						socket.emit('X_AUTH_URL', { ok:true, url: redirectUrl });
-					}catch(e){ socket.emit('X_AUTH_URL', { ok:false, error:'parse_error' }); }
+					}catch(e){ console.error('[X_AUTH_START] parse_error', e); socket.emit('X_AUTH_URL', { ok:false, error:'parse_error' }); }
 				});
 			});
-			rq.on('error', function(){ socket.emit('X_AUTH_URL', { ok:false, error:'request_error' }); });
+			rq.on('error', function(err){ console.error('[X_AUTH_START] request_error', err && err.message ? err.message : err); socket.emit('X_AUTH_URL', { ok:false, error:'request_error' }); });
 			rq.end();
-		}catch(e){ socket.emit('X_AUTH_URL', { ok:false, error:'internal_error' }); }
+		}catch(e){ console.error('[X_AUTH_START] internal_error', e && e.message ? e.message : e); socket.emit('X_AUTH_URL', { ok:false, error:'internal_error' }); }
 	});
 
 	// Raid a selected post: broadcast to all clients
