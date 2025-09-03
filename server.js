@@ -715,7 +715,7 @@ socket.on('GET_USERS_LIST',function(pack){
 			var method = 'POST';
 			var url = 'https://api.x.com/oauth/request_token';
 			var callback = APP_BASE_URL + '/x/oauth/callback';
-			// Build signature with oauth_callback included
+			// Build signature including oauth_callback
 			var headerParams = {
 				oauth_consumer_key: X_OAUTH1_CONSUMER_KEY,
 				oauth_nonce: crypto.randomBytes(16).toString('hex'),
@@ -727,10 +727,9 @@ socket.on('GET_USERS_LIST',function(pack){
 			var baseString = buildSignatureBase(method, url, baseParams);
 			var signingKey = percentEncode(X_OAUTH1_CONSUMER_SECRET)+'&';
 			var signature = hmacSha1(signingKey, baseString);
-			headerParams.oauth_signature = signature;
-			var authHeader = 'OAuth ' + Object.keys(headerParams).map(function(k){ return percentEncode(k)+'="'+percentEncode(headerParams[k])+'"';}).join(', ');
-			var body = 'oauth_callback='+percentEncode(callback);
-			var opt = { hostname:'api.x.com', path:'/oauth/request_token', method:'POST', headers:{ 'Authorization': authHeader, 'Content-Type':'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) } };
+			var oauthParams = Object.assign({ oauth_callback: callback, oauth_signature: signature }, headerParams);
+			var authHeader = 'OAuth ' + Object.keys(oauthParams).map(function(k){ return percentEncode(k)+'="'+percentEncode(oauthParams[k])+'"';}).join(', ');
+			var opt = { hostname:'api.x.com', path:'/oauth/request_token', method:'POST', headers:{ 'Authorization': authHeader } };
 			var rq = https.request(opt, function(rs){
 				var buf='';
 				rs.on('data', function(c){ buf+=c; });
@@ -753,7 +752,6 @@ socket.on('GET_USERS_LIST',function(pack){
 				});
 			});
 			rq.on('error', function(err){ console.error('[X_AUTH_START] request_error', err && err.message ? err.message : err); socket.emit('X_AUTH_URL', { ok:false, error:'request_error' }); });
-			rq.write(body);
 			rq.end();
 		}catch(e){ console.error('[X_AUTH_START] internal_error', e && e.message ? e.message : e); socket.emit('X_AUTH_URL', { ok:false, error:'internal_error' }); }
 	});
