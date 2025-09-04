@@ -361,6 +361,43 @@ function fetchUserPostsPage(username, startTime, endTime, nextToken, maxResults)
 	});
 }
 
+// Helper function to expand t.co URLs
+function expandTcoUrl(shortUrl) {
+	return new Promise(function(resolve, reject) {
+		if (!shortUrl || !shortUrl.includes('t.co')) {
+			resolve(shortUrl);
+			return;
+		}
+
+		var options = {
+			hostname: 't.co',
+			path: shortUrl.substring(shortUrl.indexOf('/', 8)), // Get path after t.co/
+			method: 'HEAD', // HEAD request to avoid downloading content
+			headers: {
+				'User-Agent': 'Mozilla/5.0 (compatible; ClubMoon Scanner)'
+			}
+		};
+
+		var req = https.request(options, function(res) {
+			var expandedUrl = res.headers.location || shortUrl;
+			console.log('[URL_EXPAND] ' + shortUrl + ' -> ' + expandedUrl);
+			resolve(expandedUrl);
+		});
+
+		req.on('error', function(err) {
+			console.log('[URL_EXPAND] Error expanding ' + shortUrl + ': ' + err.message);
+			resolve(shortUrl); // Return original if expansion fails
+		});
+
+		req.setTimeout(5000, function() {
+			req.destroy();
+			resolve(shortUrl); // Return original if timeout
+		});
+
+		req.end();
+	});
+}
+
 // Scan ALL user posts for clubmoon.fun mentions and aggregate view counts within time period
 function scanUserPosts(username, daysBack) {
 	return new Promise(function(resolve, reject) {
@@ -419,35 +456,92 @@ function scanUserPosts(username, daysBack) {
 			var clubMoonPosts = 0;
 			var totalViews = 0;
 
-			allTweets.forEach(function(tweet) {
+			// Process tweets sequentially to avoid overwhelming the URL expansion service
+			var processTweet = function(tweetIndex) {
+				if (tweetIndex >= allTweets.length) {
+					// All tweets processed
+					console.log('[SCAN_USER_POSTS] Results: ' + clubMoonPosts + '/' + totalPosts + ' clubmoon.fun posts, ' + totalViews + ' views from clubmoon.fun posts');
+					resolve({
+						totalPosts: totalPosts,
+						clubMoonPosts: clubMoonPosts,
+						totalViews: totalViews
+					});
+					return;
+				}
+
+				var tweet = allTweets[tweetIndex];
 				var text = tweet.text || '';
 				var lowerText = text.toLowerCase();
-				var hasClubMoon = lowerText.includes('clubmoon.fun');
 
 				// Debug: Log each post's text to see what we're checking
 				console.log('[SCAN_USER_POSTS] Post text: "' + text.substring(0, 100) + (text.length > 100 ? '...' : '') + '"');
-				console.log('[SCAN_USER_POSTS] Contains clubmoon.fun: ' + hasClubMoon);
 
-				if (hasClubMoon) {
+				// First check if the text directly contains clubmoon.fun
+				var hasClubMoonDirect = lowerText.includes('clubmoon.fun');
+
+				if (hasClubMoonDirect) {
+					console.log('[SCAN_USER_POSTS] Contains clubmoon.fun directly: true');
 					clubMoonPosts++;
 
-					// Only count views from posts that contain clubmoon.fun
+					// Only count views from posts that contain "clubmoon.fun"
 					if (tweet.public_metrics && tweet.public_metrics.impression_count) {
 						totalViews += tweet.public_metrics.impression_count;
 						console.log('[SCAN_USER_POSTS] ClubMoon post found! Views: ' + tweet.public_metrics.impression_count);
 					} else {
 						console.log('[SCAN_USER_POSTS] ClubMoon post found but no impression_count available');
 					}
+
+					// Process next tweet
+					processTweet(tweetIndex + 1);
+				} else {
+					// Check for t.co URLs and expand them
+					var urlRegex = /https:\/\/t\.co\/[a-zA-Z0-9]+/g;
+					var tcoUrls = text.match(urlRegex);
+
+					if (tcoUrls && tcoUrls.length > 0) {
+						console.log('[SCAN_USER_POSTS] Found ' + tcoUrls.length + ' t.co URLs, expanding...');
+
+						// Expand all t.co URLs in this tweet
+						var expandPromises = tcoUrls.map(function(url) {
+							return expandTcoUrl(url);
+						});
+
+						Promise.all(expandPromises).then(function(expandedUrls) {
+							var hasClubMoonUrl = expandedUrls.some(function(expandedUrl) {
+								return expandedUrl.toLowerCase().includes('clubmoon.fun');
+							});
+
+							console.log('[SCAN_USER_POSTS] ClubMoon URL found: ' + hasClubMoonUrl);
+
+							if (hasClubMoonUrl) {
+								clubMoonPosts++;
+
+								// Only count views from posts that contain "clubmoon.fun"
+								if (tweet.public_metrics && tweet.public_metrics.impression_count) {
+									totalViews += tweet.public_metrics.impression_count;
+									console.log('[SCAN_USER_POSTS] ClubMoon post found via URL! Views: ' + tweet.public_metrics.impression_count);
+								} else {
+									console.log('[SCAN_USER_POSTS] ClubMoon post found via URL but no impression_count available');
+								}
+							}
+
+							// Process next tweet
+							processTweet(tweetIndex + 1);
+						}).catch(function(err) {
+							console.log('[SCAN_USER_POSTS] Error expanding URLs: ' + err.message);
+							// Process next tweet even if URL expansion fails
+							processTweet(tweetIndex + 1);
+						});
+					} else {
+						console.log('[SCAN_USER_POSTS] No clubmoon.fun found');
+						// Process next tweet
+						processTweet(tweetIndex + 1);
+					}
 				}
-			});
+			};
 
-			console.log('[SCAN_USER_POSTS] Results: ' + clubMoonPosts + '/' + totalPosts + ' clubmoon.fun posts, ' + totalViews + ' views from clubmoon.fun posts');
-
-			resolve({
-				totalPosts: totalPosts,
-				clubMoonPosts: clubMoonPosts,
-				totalViews: totalViews
-			});
+			// Start processing tweets
+			processTweet(0);
 		}
 
 		// Start fetching the first page
