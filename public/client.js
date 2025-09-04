@@ -321,6 +321,17 @@ window.addEventListener('load', function() {
 		} catch(e) { console.error('[GENERATE_REPLY_RESULT] err', e); }
 	 });
 
+	 // Forward scan results back to Unity
+	 socket.on('SCAN_USER_POSTS_RESULT', function(payload) {
+		try {
+			var json = JSON.stringify(payload || {});
+			console.log('[SCAN_USER_POSTS_RESULT] payload:', json);
+			if(window.unityInstance!=null) {
+				window.unityInstance.SendMessage('NetworkManager', 'OnReceiveScanResults', json);
+			}
+		} catch(e) { console.error('[SCAN_USER_POSTS_RESULT] err', e); }
+	 });
+
 	 	// X OAuth: receive authorization URL
 	socket.on('X_AUTH_URL', function(payload) {
 		try {
@@ -341,7 +352,16 @@ window.addEventListener('load', function() {
 		} catch(e) {}
 	});
 
-
+ 	// Forward scan results back to Unity
+	 socket.on('SCAN_USER_POSTS_RESULT', function(payload) {
+		try {
+			var json = JSON.stringify(payload || {});
+			console.log('[SCAN_USER_POSTS_RESULT] payload:', json);
+			if(window.unityInstance!=null) {
+				window.unityInstance.SendMessage('NetworkManager', 'OnReceiveScanResults', json);
+			}
+		} catch(e) { console.error('[SCAN_USER_POSTS_RESULT] err', e); }
+	 });
 	
 
 });//END_window_addEventListener

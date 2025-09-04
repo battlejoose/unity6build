@@ -312,6 +312,77 @@ function flattenXResponse(apiResponse) {
 	}).filter(function(x){ return x != null; });
 }
 
+// Scan user posts for clubmoon.fun mentions and aggregate view counts
+function scanUserPosts(username, daysBack) {
+	return new Promise(function(resolve, reject) {
+		if (!X_BEARER_TOKEN) {
+			return reject(new Error('MISSING_X_BEARER_TOKEN'));
+		}
+
+		var endTime = new Date();
+		var startTime = new Date(endTime.getTime() - (daysBack * 24 * 60 * 60 * 1000));
+
+		var params = new URLSearchParams({
+			query: 'from:' + username,
+			start_time: startTime.toISOString(),
+			end_time: endTime.toISOString(),
+			max_results: '100',
+			'tweet.fields': 'created_at,public_metrics,text,author_id,non_public_metrics',
+			expansions: 'author_id',
+			'user.fields': 'username,name'
+		});
+
+		var options = {
+			hostname: X_API_HOST,
+			path: '/2/tweets/search/recent?' + params.toString(),
+			method: 'GET',
+			headers: { 'Authorization': 'Bearer ' + X_BEARER_TOKEN }
+		};
+
+		var req = https.request(options, function(res) {
+			var data = '';
+			res.on('data', function(chunk) { data += chunk; });
+			res.on('end', function() {
+				try {
+					var json = JSON.parse(data);
+					if (json.errors) {
+						return reject(new Error('API Error: ' + JSON.stringify(json.errors)));
+					}
+
+					var tweets = json.data || [];
+					var totalPosts = tweets.length;
+					var clubMoonPosts = 0;
+					var totalViews = 0;
+
+					tweets.forEach(function(tweet) {
+						var text = tweet.text || '';
+						if (text.toLowerCase().includes('clubmoon.fun')) {
+							clubMoonPosts++;
+						}
+
+						// Add impression count (views) if available
+						if (tweet.non_public_metrics && tweet.non_public_metrics.impression_count) {
+							totalViews += tweet.non_public_metrics.impression_count;
+						} else if (tweet.public_metrics && tweet.public_metrics.impression_count) {
+							totalViews += tweet.public_metrics.impression_count;
+						}
+					});
+
+					resolve({
+						totalPosts: totalPosts,
+						clubMoonPosts: clubMoonPosts,
+						totalViews: totalViews
+					});
+				} catch (e) {
+					reject(e);
+				}
+			});
+		});
+		req.on('error', reject);
+		req.end();
+	});
+}
+
 function getDistance(x1, y1, x2, y2){
     let y = x2 - x1;
     let x = y2 - y1;
@@ -700,6 +771,32 @@ socket.on('GET_USERS_LIST',function(pack){
 		} catch (e) {
 			console.error('[X_SEARCH] bad payload');
 			socket.emit('X_SEARCH_RESULTS', { tweets: [], next_token: null, error: 'bad_payload' });
+		}
+	});//END_SOCKET_ON
+
+	// Scan user posts for analytics
+	socket.on('SCAN_USER_POSTS', function (_data)
+	{
+		try {
+			var data = JSON.parse(_data);
+			var username = data.username || '';
+			var daysBack = data.daysBack || 7;
+
+			if (!username) {
+				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, totalViews: 0, error: 'missing_username' });
+				return;
+			}
+
+			scanUserPosts(username, daysBack).then(function(results){
+				console.log('[SCAN_USER_POSTS] success for @' + username + ':', results);
+				socket.emit('SCAN_USER_POSTS_RESULT', results);
+			}).catch(function(err){
+				console.error('[SCAN_USER_POSTS] error:', err && err.message ? err.message : err);
+				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, totalViews: 0, error: 'scan_failed' });
+			});
+		} catch (e) {
+			console.error('[SCAN_USER_POSTS] bad payload');
+			socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, totalViews: 0, error: 'bad_payload' });
 		}
 	});//END_SOCKET_ON
 
