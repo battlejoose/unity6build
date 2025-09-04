@@ -324,7 +324,7 @@ function fetchUserPostsPage(username, startTime, endTime, nextToken, maxResults)
 			start_time: startTime.toISOString(),
 			end_time: endTime.toISOString(),
 			max_results: maxResults.toString(),
-			'tweet.fields': 'created_at,public_metrics,text,author_id,non_public_metrics',
+			'tweet.fields': 'created_at,public_metrics,text,author_id',
 			expansions: 'author_id',
 			'user.fields': 'username,name'
 		});
@@ -373,7 +373,7 @@ function scanUserPosts(username, daysBack) {
 		endTime.setSeconds(endTime.getSeconds() - 15); // Use 15 seconds to be safe
 		var startTime = new Date(endTime.getTime() - (daysBack * 24 * 60 * 60 * 1000));
 
-		console.log('[SCAN_USER_POSTS] Scanning @' + username + ' for last ' + daysBack + ' days: ' + startTime.toISOString() + ' to ' + endTime.toISOString());
+		console.log('[SCAN_USER_POSTS] Scanning @' + username + ' for last ' + daysBack + ' days (counting clubmoon.fun posts and their views): ' + startTime.toISOString() + ' to ' + endTime.toISOString());
 
 		var allTweets = [];
 		var nextToken = null;
@@ -423,17 +423,15 @@ function scanUserPosts(username, daysBack) {
 				var text = tweet.text || '';
 				if (text.toLowerCase().includes('clubmoon.fun')) {
 					clubMoonPosts++;
-				}
 
-				// Add impression count (views) if available
-				if (tweet.non_public_metrics && tweet.non_public_metrics.impression_count) {
-					totalViews += tweet.non_public_metrics.impression_count;
-				} else if (tweet.public_metrics && tweet.public_metrics.impression_count) {
-					totalViews += tweet.public_metrics.impression_count;
+					// Only count views from posts that contain clubmoon.fun
+					if (tweet.public_metrics && tweet.public_metrics.impression_count) {
+						totalViews += tweet.public_metrics.impression_count;
+					}
 				}
 			});
 
-			console.log('[SCAN_USER_POSTS] Results: ' + clubMoonPosts + '/' + totalPosts + ' clubmoon.fun posts, ' + totalViews + ' total views');
+			console.log('[SCAN_USER_POSTS] Results: ' + clubMoonPosts + '/' + totalPosts + ' clubmoon.fun posts, ' + totalViews + ' views from clubmoon.fun posts');
 
 			resolve({
 				totalPosts: totalPosts,
