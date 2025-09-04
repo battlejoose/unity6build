@@ -373,7 +373,7 @@ function scanUserPosts(username, daysBack) {
 		endTime.setSeconds(endTime.getSeconds() - 15); // Use 15 seconds to be safe
 		var startTime = new Date(endTime.getTime() - (daysBack * 24 * 60 * 60 * 1000));
 
-		console.log('[SCAN_USER_POSTS] Scanning @' + username + ' from ' + startTime.toISOString() + ' to ' + endTime.toISOString());
+		console.log('[SCAN_USER_POSTS] Scanning @' + username + ' for last ' + daysBack + ' days: ' + startTime.toISOString() + ' to ' + endTime.toISOString());
 
 		var allTweets = [];
 		var nextToken = null;
@@ -844,7 +844,7 @@ socket.on('GET_USERS_LIST',function(pack){
 		try {
 			var data = JSON.parse(_data);
 			var username = data.username || '';
-			var daysBack = data.daysBack || 7;
+			var daysBack = parseFloat(data.daysBack) || 6.0;
 
 			if (!username) {
 				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, totalViews: 0, error: 'missing_username' });
