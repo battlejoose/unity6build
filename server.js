@@ -421,12 +421,22 @@ function scanUserPosts(username, daysBack) {
 
 			allTweets.forEach(function(tweet) {
 				var text = tweet.text || '';
-				if (text.toLowerCase().includes('clubmoon.fun')) {
+				var lowerText = text.toLowerCase();
+				var hasClubMoon = lowerText.includes('clubmoon.fun');
+
+				// Debug: Log each post's text to see what we're checking
+				console.log('[SCAN_USER_POSTS] Post text: "' + text.substring(0, 100) + (text.length > 100 ? '...' : '') + '"');
+				console.log('[SCAN_USER_POSTS] Contains clubmoon.fun: ' + hasClubMoon);
+
+				if (hasClubMoon) {
 					clubMoonPosts++;
 
 					// Only count views from posts that contain clubmoon.fun
 					if (tweet.public_metrics && tweet.public_metrics.impression_count) {
 						totalViews += tweet.public_metrics.impression_count;
+						console.log('[SCAN_USER_POSTS] ClubMoon post found! Views: ' + tweet.public_metrics.impression_count);
+					} else {
+						console.log('[SCAN_USER_POSTS] ClubMoon post found but no impression_count available');
 					}
 				}
 			});
