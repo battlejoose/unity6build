@@ -312,25 +312,26 @@ function flattenXResponse(apiResponse) {
 	}).filter(function(x){ return x != null; });
 }
 
-// Scan user posts for clubmoon.fun mentions and aggregate view counts
-function scanUserPosts(username, daysBack) {
+// Helper function to fetch one page of user posts
+function fetchUserPostsPage(username, startTime, endTime, nextToken, maxResults) {
 	return new Promise(function(resolve, reject) {
 		if (!X_BEARER_TOKEN) {
 			return reject(new Error('MISSING_X_BEARER_TOKEN'));
 		}
 
-		var endTime = new Date();
-		var startTime = new Date(endTime.getTime() - (daysBack * 24 * 60 * 60 * 1000));
-
 		var params = new URLSearchParams({
 			query: 'from:' + username,
 			start_time: startTime.toISOString(),
 			end_time: endTime.toISOString(),
-			max_results: '100',
+			max_results: maxResults.toString(),
 			'tweet.fields': 'created_at,public_metrics,text,author_id,non_public_metrics',
 			expansions: 'author_id',
 			'user.fields': 'username,name'
 		});
+
+		if (nextToken) {
+			params.append('next_token', nextToken);
+		}
 
 		var options = {
 			hostname: X_API_HOST,
@@ -348,38 +349,101 @@ function scanUserPosts(username, daysBack) {
 					if (json.errors) {
 						return reject(new Error('API Error: ' + JSON.stringify(json.errors)));
 					}
-
-					var tweets = json.data || [];
-					var totalPosts = tweets.length;
-					var clubMoonPosts = 0;
-					var totalViews = 0;
-
-					tweets.forEach(function(tweet) {
-						var text = tweet.text || '';
-						if (text.toLowerCase().includes('clubmoon.fun')) {
-							clubMoonPosts++;
-						}
-
-						// Add impression count (views) if available
-						if (tweet.non_public_metrics && tweet.non_public_metrics.impression_count) {
-							totalViews += tweet.non_public_metrics.impression_count;
-						} else if (tweet.public_metrics && tweet.public_metrics.impression_count) {
-							totalViews += tweet.public_metrics.impression_count;
-						}
-					});
-
-					resolve({
-						totalPosts: totalPosts,
-						clubMoonPosts: clubMoonPosts,
-						totalViews: totalViews
-					});
+					resolve(json);
 				} catch (e) {
 					reject(e);
 				}
 			});
 		});
 		req.on('error', reject);
+		req.setTimeout(30000, function() { req.destroy(); reject(new Error('Request timeout')); });
 		req.end();
+	});
+}
+
+// Scan ALL user posts for clubmoon.fun mentions and aggregate view counts within time period
+function scanUserPosts(username, daysBack) {
+	return new Promise(function(resolve, reject) {
+		if (!X_BEARER_TOKEN) {
+			return reject(new Error('MISSING_X_BEARER_TOKEN'));
+		}
+
+		var endTime = new Date();
+		// X API requires end_time to be at least 10 seconds before current time
+		endTime.setSeconds(endTime.getSeconds() - 15); // Use 15 seconds to be safe
+		var startTime = new Date(endTime.getTime() - (daysBack * 24 * 60 * 60 * 1000));
+
+		console.log('[SCAN_USER_POSTS] Scanning @' + username + ' from ' + startTime.toISOString() + ' to ' + endTime.toISOString());
+
+		var allTweets = [];
+		var nextToken = null;
+		var pageCount = 0;
+		var maxPages = 50; // Safety limit to prevent infinite loops (50 pages = 5000 posts max)
+
+		function fetchNextPage() {
+			pageCount++;
+			if (pageCount > maxPages) {
+				console.log('[SCAN_USER_POSTS] Reached maximum page limit (' + maxPages + '), stopping...');
+				processResults();
+				return;
+			}
+
+			fetchUserPostsPage(username, startTime, endTime, nextToken, 100).then(function(json) {
+				var tweets = json.data || [];
+				var meta = json.meta || {};
+
+				console.log('[SCAN_USER_POSTS] Page ' + pageCount + ': Found ' + tweets.length + ' posts');
+
+				if (tweets.length > 0) {
+					allTweets = allTweets.concat(tweets);
+				}
+
+				// Check if there's another page
+				if (meta.next_token && tweets.length === 100) {
+					nextToken = meta.next_token;
+					// Add a small delay to avoid rate limiting
+					setTimeout(fetchNextPage, 100);
+				} else {
+					processResults();
+				}
+			}).catch(function(err) {
+				console.error('[SCAN_USER_POSTS] Error fetching page ' + pageCount + ':', err.message);
+				processResults(); // Process what we have so far
+			});
+		}
+
+		function processResults() {
+			console.log('[SCAN_USER_POSTS] Processing ' + allTweets.length + ' total posts');
+
+			var totalPosts = allTweets.length;
+			var clubMoonPosts = 0;
+			var totalViews = 0;
+
+			allTweets.forEach(function(tweet) {
+				var text = tweet.text || '';
+				if (text.toLowerCase().includes('clubmoon.fun')) {
+					clubMoonPosts++;
+				}
+
+				// Add impression count (views) if available
+				if (tweet.non_public_metrics && tweet.non_public_metrics.impression_count) {
+					totalViews += tweet.non_public_metrics.impression_count;
+				} else if (tweet.public_metrics && tweet.public_metrics.impression_count) {
+					totalViews += tweet.public_metrics.impression_count;
+				}
+			});
+
+			console.log('[SCAN_USER_POSTS] Results: ' + clubMoonPosts + '/' + totalPosts + ' clubmoon.fun posts, ' + totalViews + ' total views');
+
+			resolve({
+				totalPosts: totalPosts,
+				clubMoonPosts: clubMoonPosts,
+				totalViews: totalViews
+			});
+		}
+
+		// Start fetching the first page
+		fetchNextPage();
 	});
 }
 
