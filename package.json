@@ -9,6 +9,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
+    "pg": "^8.11.3",
     "socket.io": "^4.6.1",
     "socketio": "^1.0.0",
     "uuid": "^9.0.1"

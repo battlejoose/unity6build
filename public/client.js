@@ -362,7 +362,28 @@ window.addEventListener('load', function() {
 			}
 		} catch(e) { console.error('[SCAN_USER_POSTS_RESULT] err', e); }
 	 });
-	
+	 
+	 // Forward qualifying posts from database
+	 socket.on('QUALIFYING_POSTS_RESULT', function(payload) {
+		try {
+			var json = JSON.stringify(payload || {});
+			console.log('[QUALIFYING_POSTS_RESULT] payload:', json);
+			if(window.unityInstance!=null) {
+				window.unityInstance.SendMessage('NetworkManager', 'OnReceiveQualifyingPosts', json);
+			}
+		} catch(e) { console.error('[QUALIFYING_POSTS_RESULT] err', e); }
+	 });
+
+	 // Forward total qualifying views
+	 socket.on('TOTAL_QUALIFYING_VIEWS_RESULT', function(payload) {
+		try {
+			var json = JSON.stringify(payload || {});
+			console.log('[TOTAL_QUALIFYING_VIEWS_RESULT] payload:', json);
+			if(window.unityInstance!=null) {
+				window.unityInstance.SendMessage('NetworkManager', 'OnReceiveTotalQualifyingViews', json);
+			}
+		} catch(e) { console.error('[TOTAL_QUALIFYING_VIEWS_RESULT] err', e); }
+	 });
 
 });//END_window_addEventListener
 

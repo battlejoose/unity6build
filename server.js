@@ -11,6 +11,7 @@ var https = require('https');
 var fs = require('fs');
 var path = require('path');
 var crypto = require('crypto');
+const { Pool } = require('pg');
 
 
 const cors=require("cors");
@@ -55,6 +56,107 @@ try {
     }
 } catch (e) {
     CHARACTER_PROMPT = '';
+}
+
+// Database configuration
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false
+    }
+});
+
+// Initialize database table
+async function initDatabase() {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS qualifying_posts (
+                tweet_id TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                post_text TEXT,
+                last_impression_count BIGINT DEFAULT 0,
+                total_impression_count BIGINT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        console.log('[DB] Qualifying posts table initialized');
+    } catch (err) {
+        console.error('[DB] Error initializing table:', err);
+    }
+}
+
+// Call init on startup
+initDatabase();
+
+// Function to log qualifying posts to database and calculate new views
+async function logQualifyingPost(tweetId, username, postText, currentImpressionCount) {
+    try {
+        // First, check if post exists and get previous view count
+        const selectQuery = 'SELECT last_impression_count FROM qualifying_posts WHERE tweet_id = $1';
+        const existingPost = await pool.query(selectQuery, [tweetId]);
+
+        let previousViews = 0;
+        let newViews = currentImpressionCount || 0;
+
+        if (existingPost.rows.length > 0) {
+            previousViews = existingPost.rows[0].last_impression_count || 0;
+            newViews = Math.max(0, currentImpressionCount - previousViews);
+        }
+
+        // Insert or update the post
+        const upsertQuery = `
+            INSERT INTO qualifying_posts (tweet_id, username, post_text, last_impression_count, total_impression_count, last_updated)
+            VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+            ON CONFLICT (tweet_id)
+            DO UPDATE SET
+                last_impression_count = EXCLUDED.last_impression_count,
+                total_impression_count = qualifying_posts.total_impression_count + EXCLUDED.last_impression_count - qualifying_posts.last_impression_count,
+                last_updated = CURRENT_TIMESTAMP
+        `;
+        const values = [tweetId, username, postText || '', currentImpressionCount || 0, currentImpressionCount || 0];
+
+        await pool.query(upsertQuery, values);
+        console.log('[DB] Logged qualifying post:', tweetId, 'current views:', currentImpressionCount, 'previous views:', previousViews, 'new views:', newViews);
+
+        return newViews;
+    } catch (err) {
+        console.error('[DB] Error logging post', tweetId, ':', err.message);
+        return 0; // Return 0 new views on error
+    }
+}
+
+// Function to get all qualifying posts from database
+async function getQualifyingPosts(username = null) {
+    try {
+        let query = 'SELECT * FROM qualifying_posts';
+        let values = [];
+
+        if (username) {
+            query += ' WHERE username = $1';
+            values = [username];
+        }
+
+        query += ' ORDER BY created_at DESC';
+
+        const result = await pool.query(query, values);
+        return result.rows;
+    } catch (err) {
+        console.error('[DB] Error fetching qualifying posts:', err.message);
+        return [];
+    }
+}
+
+// Function to get total qualifying views for a user
+async function getTotalQualifyingViews(username) {
+    try {
+        const query = 'SELECT SUM(impression_count) as total_views FROM qualifying_posts WHERE username = $1';
+        const result = await pool.query(query, [username]);
+        return result.rows[0].total_views || 0;
+    } catch (err) {
+        console.error('[DB] Error fetching total views:', err.message);
+        return 0;
+    }
 }
 
 function callOpenAIChat(systemPrompt, userPrompt) {
@@ -398,12 +500,25 @@ function expandTcoUrl(shortUrl) {
 	});
 }
 
-// Scan ALL user posts for clubmoon.fun mentions and aggregate view counts within time period
+	// Scan ALL user posts for clubmoon.fun mentions and aggregate view counts within time period
 function scanUserPosts(username, daysBack) {
 	return new Promise(function(resolve, reject) {
 		if (!X_BEARER_TOKEN) {
 			return reject(new Error('MISSING_X_BEARER_TOKEN'));
 		}
+
+		// Test database connection first
+		pool.query('SELECT 1').then(function() {
+			console.log('[SCAN_USER_POSTS] Database connection verified');
+			// Database is working, proceed with scan
+			performScan(resolve, reject);
+		}).catch(function(err) {
+			console.error('[SCAN_USER_POSTS] Database connection failed:', err.message);
+			return reject(new Error('DATABASE_UNAVAILABLE'));
+		});
+	});
+
+	function performScan(resolve, reject) {
 
 		var endTime = new Date();
 		// X API requires end_time to be at least 10 seconds before current time
@@ -455,16 +570,22 @@ function scanUserPosts(username, daysBack) {
 			var totalPosts = allTweets.length;
 			var clubMoonPosts = 0;
 			var totalViews = 0;
+			var newViews = 0;
 
 			// Process tweets sequentially to avoid overwhelming the URL expansion service
+			var scanAborted = false;
+
 			var processTweet = function(tweetIndex) {
+				if (scanAborted) return; // Stop processing if scan was aborted
+
 				if (tweetIndex >= allTweets.length) {
 					// All tweets processed
-					console.log('[SCAN_USER_POSTS] Results: ' + clubMoonPosts + '/' + totalPosts + ' clubmoon.fun posts, ' + totalViews + ' views from clubmoon.fun posts');
+					console.log('[SCAN_USER_POSTS] Results: ' + clubMoonPosts + '/' + totalPosts + ' clubmoon.fun posts, ' + totalViews + ' total views, ' + newViews + ' new views to pay for');
 					resolve({
 						totalPosts: totalPosts,
 						clubMoonPosts: clubMoonPosts,
-						totalViews: totalViews
+						totalViews: totalViews,
+						newViews: newViews
 					});
 					return;
 				}
@@ -491,8 +612,20 @@ function scanUserPosts(username, daysBack) {
 						console.log('[SCAN_USER_POSTS] ClubMoon post found but no impression_count available');
 					}
 
-					// Process next tweet
-					processTweet(tweetIndex + 1);
+					// Log qualifying post to database and get new views (CRITICAL - abort scan if database fails)
+					var impressionCount = (tweet.public_metrics && tweet.public_metrics.impression_count) ? tweet.public_metrics.impression_count : 0;
+					logQualifyingPost(tweet.id_str || tweet.id, username, text, impressionCount).then(function(postNewViews) {
+						newViews += postNewViews;
+						console.log('[SCAN_USER_POSTS] Added ' + postNewViews + ' new views from direct match, total new views: ' + newViews);
+						// Process next tweet
+						processTweet(tweetIndex + 1);
+					}).catch(function(err) {
+						console.error('[SCAN_USER_POSTS] CRITICAL: Database error logging direct match post:', err.message);
+						scanAborted = true;
+						return reject(new Error('DATABASE_ERROR_DURING_SCAN'));
+					});
+
+					return; // Wait for async database operation
 				} else {
 					// Check for t.co URLs and expand them
 					var urlRegex = /https:\/\/t\.co\/[a-zA-Z0-9]+/g;
@@ -523,10 +656,25 @@ function scanUserPosts(username, daysBack) {
 								} else {
 									console.log('[SCAN_USER_POSTS] ClubMoon post found via URL but no impression_count available');
 								}
-							}
 
-							// Process next tweet
-							processTweet(tweetIndex + 1);
+								// Log qualifying post to database and get new views (CRITICAL - abort scan if database fails)
+								var impressionCount = (tweet.public_metrics && tweet.public_metrics.impression_count) ? tweet.public_metrics.impression_count : 0;
+								logQualifyingPost(tweet.id_str || tweet.id, username, text, impressionCount).then(function(postNewViews) {
+									newViews += postNewViews;
+									console.log('[SCAN_USER_POSTS] Added ' + postNewViews + ' new views from URL match, total new views: ' + newViews);
+									// Process next tweet
+									processTweet(tweetIndex + 1);
+								}).catch(function(err) {
+									console.error('[SCAN_USER_POSTS] CRITICAL: Database error logging URL match post:', err.message);
+									scanAborted = true;
+									return reject(new Error('DATABASE_ERROR_DURING_SCAN'));
+								});
+
+								return; // Wait for async database operation
+							} else {
+								// Process next tweet if no ClubMoon URL found
+								processTweet(tweetIndex + 1);
+							}
 						}).catch(function(err) {
 							console.log('[SCAN_USER_POSTS] Error expanding URLs: ' + err.message);
 							// Process next tweet even if URL expansion fails
@@ -542,11 +690,11 @@ function scanUserPosts(username, daysBack) {
 
 			// Start processing tweets
 			processTweet(0);
-		}
 
-		// Start fetching the first page
-		fetchNextPage();
-	});
+			// Start fetching the first page
+			fetchNextPage();
+		}
+	}
 }
 
 function getDistance(x1, y1, x2, y2){
@@ -949,7 +1097,7 @@ socket.on('GET_USERS_LIST',function(pack){
 			var daysBack = parseFloat(data.daysBack) || 6.0;
 
 			if (!username) {
-				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, totalViews: 0, error: 'missing_username' });
+				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, totalViews: 0, newViews: 0, error: 'missing_username' });
 				return;
 			}
 
@@ -958,11 +1106,64 @@ socket.on('GET_USERS_LIST',function(pack){
 				socket.emit('SCAN_USER_POSTS_RESULT', results);
 			}).catch(function(err){
 				console.error('[SCAN_USER_POSTS] error:', err && err.message ? err.message : err);
-				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, totalViews: 0, error: 'scan_failed' });
+				var errorType = 'scan_failed';
+				if (err && err.message) {
+					if (err.message === 'DATABASE_UNAVAILABLE') {
+						errorType = 'DATABASE_UNAVAILABLE';
+					} else if (err.message === 'DATABASE_ERROR_DURING_SCAN') {
+						errorType = 'DATABASE_ERROR_DURING_SCAN';
+					}
+				}
+				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, totalViews: 0, newViews: 0, error: errorType });
 			});
 		} catch (e) {
 			console.error('[SCAN_USER_POSTS] bad payload');
-			socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, totalViews: 0, error: 'bad_payload' });
+			socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, totalViews: 0, newViews: 0, error: 'bad_payload' });
+		}
+	});//END_SOCKET_ON
+
+	// Get qualifying posts from database
+	socket.on('GET_QUALIFYING_POSTS', function (_data)
+	{
+		try {
+			var data = JSON.parse(_data || '{}');
+			var username = data.username || null;
+
+			getQualifyingPosts(username).then(function(posts){
+				console.log('[GET_QUALIFYING_POSTS] Retrieved ' + posts.length + ' qualifying posts');
+				socket.emit('QUALIFYING_POSTS_RESULT', { posts: posts });
+			}).catch(function(err){
+				console.error('[GET_QUALIFYING_POSTS] error:', err && err.message ? err.message : err);
+				socket.emit('QUALIFYING_POSTS_RESULT', { posts: [], error: 'database_error' });
+			});
+		} catch (e) {
+			console.error('[GET_QUALIFYING_POSTS] bad payload');
+			socket.emit('QUALIFYING_POSTS_RESULT', { posts: [], error: 'bad_payload' });
+		}
+	});//END_SOCKET_ON
+
+	// Get total qualifying views for a user
+	socket.on('GET_TOTAL_QUALIFYING_VIEWS', function (_data)
+	{
+		try {
+			var data = JSON.parse(_data || '{}');
+			var username = data.username || '';
+
+			if (!username) {
+				socket.emit('TOTAL_QUALIFYING_VIEWS_RESULT', { totalViews: 0, error: 'missing_username' });
+				return;
+			}
+
+			getTotalQualifyingViews(username).then(function(totalViews){
+				console.log('[GET_TOTAL_QUALIFYING_VIEWS] @' + username + ' has ' + totalViews + ' total qualifying views');
+				socket.emit('TOTAL_QUALIFYING_VIEWS_RESULT', { totalViews: totalViews });
+			}).catch(function(err){
+				console.error('[GET_TOTAL_QUALIFYING_VIEWS] error:', err && err.message ? err.message : err);
+				socket.emit('TOTAL_QUALIFYING_VIEWS_RESULT', { totalViews: 0, error: 'database_error' });
+			});
+		} catch (e) {
+			console.error('[GET_TOTAL_QUALIFYING_VIEWS] bad payload');
+			socket.emit('TOTAL_QUALIFYING_VIEWS_RESULT', { totalViews: 0, error: 'bad_payload' });
 		}
 	});//END_SOCKET_ON
 
