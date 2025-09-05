@@ -11,11 +11,12 @@ var https = require('https');
 var fs = require('fs');
 var path = require('path');
 var crypto = require('crypto');
+const { Pool } = require('pg');
 
 
 const cors=require("cors");
 const corsOptions ={
-   origin:'*', 
+   origin:'*',
    credentials:true,            //access-control-allow-credentials:true
    optionSuccessStatus:200
 }
@@ -26,6 +27,22 @@ app.use("/public/TemplateData",express.static(__dirname + "/public/TemplateData"
 app.use("/public/Build",express.static(__dirname + "/public/Build"));
 app.use(express.static(__dirname+'/public'));
 app.use(express.json());
+
+// Database setup
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+});
+
+// Create post_views table if it doesn't exist
+pool.query(`
+    CREATE TABLE IF NOT EXISTS post_views (
+        post_id TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        views INTEGER NOT NULL,
+        last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+`).catch(err => console.error('[DB] Error creating table:', err));
 
 var clients			= [];// to storage clients
 var clientLookup = {};// clients search engine
@@ -398,7 +415,56 @@ function expandTcoUrl(shortUrl) {
 	});
 }
 
-// Scan ALL user posts for clubmoon.fun mentions and aggregate view counts within time period
+// Helper function to check database for existing post and calculate new views
+function checkAndUpdatePostViews(postId, username, currentViews) {
+	return new Promise(function(resolve, reject) {
+		// First, try to get existing post from database
+		pool.query('SELECT views FROM post_views WHERE post_id = $1', [postId])
+			.then(function(result) {
+				if (result.rows.length > 0) {
+					// Post exists in database
+					var storedViews = result.rows[0].views;
+					console.log('[DB] Post ' + postId + ' exists with ' + storedViews + ' stored views, current views: ' + currentViews);
+
+					if (currentViews > storedViews) {
+						// Views increased, update database and return difference
+						var viewsDifference = currentViews - storedViews;
+						pool.query('UPDATE post_views SET views = $1, last_scanned = CURRENT_TIMESTAMP WHERE post_id = $2', [currentViews, postId])
+							.then(function() {
+								console.log('[DB] Updated post ' + postId + ' views from ' + storedViews + ' to ' + currentViews + ', new views: ' + viewsDifference);
+								resolve(viewsDifference);
+							})
+							.catch(function(err) {
+								console.error('[DB] Error updating post views:', err);
+								reject(err);
+							});
+					} else {
+						// No new views
+						console.log('[DB] Post ' + postId + ' has no new views (stored: ' + storedViews + ', current: ' + currentViews + ')');
+						resolve(0);
+					}
+				} else {
+					// Post doesn't exist, insert it and count all views as new
+					console.log('[DB] Post ' + postId + ' not found, inserting with ' + currentViews + ' views');
+					pool.query('INSERT INTO post_views (post_id, username, views) VALUES ($1, $2, $3)', [postId, username, currentViews])
+						.then(function() {
+							console.log('[DB] Inserted new post ' + postId + ' with ' + currentViews + ' views');
+							resolve(currentViews);
+						})
+						.catch(function(err) {
+							console.error('[DB] Error inserting post views:', err);
+							reject(err);
+						});
+				}
+			})
+			.catch(function(err) {
+				console.error('[DB] Error checking post views:', err);
+				reject(err);
+			});
+	});
+}
+
+// Scan ALL user posts for clubmoon.fun mentions and aggregate NEW view counts within time period
 function scanUserPosts(username, daysBack) {
 	return new Promise(function(resolve, reject) {
 		if (!X_BEARER_TOKEN) {
@@ -410,7 +476,7 @@ function scanUserPosts(username, daysBack) {
 		endTime.setSeconds(endTime.getSeconds() - 15); // Use 15 seconds to be safe
 		var startTime = new Date(endTime.getTime() - (daysBack * 24 * 60 * 60 * 1000));
 
-		console.log('[SCAN_USER_POSTS] Scanning @' + username + ' for last ' + daysBack + ' days (counting clubmoon.fun posts and their views): ' + startTime.toISOString() + ' to ' + endTime.toISOString());
+		console.log('[SCAN_USER_POSTS] Scanning @' + username + ' for last ' + daysBack + ' days (counting NEW clubmoon.fun post views): ' + startTime.toISOString() + ' to ' + endTime.toISOString());
 
 		var allTweets = [];
 		var nextToken = null;
@@ -454,17 +520,17 @@ function scanUserPosts(username, daysBack) {
 
 			var totalPosts = allTweets.length;
 			var clubMoonPosts = 0;
-			var totalViews = 0;
+			var newViews = 0;
 
 			// Process tweets sequentially to avoid overwhelming the URL expansion service
 			var processTweet = function(tweetIndex) {
 				if (tweetIndex >= allTweets.length) {
 					// All tweets processed
-					console.log('[SCAN_USER_POSTS] Results: ' + clubMoonPosts + '/' + totalPosts + ' clubmoon.fun posts, ' + totalViews + ' views from clubmoon.fun posts');
+					console.log('[SCAN_USER_POSTS] Results: ' + clubMoonPosts + '/' + totalPosts + ' clubmoon.fun posts, ' + newViews + ' NEW views from clubmoon.fun posts');
 					resolve({
 						totalPosts: totalPosts,
 						clubMoonPosts: clubMoonPosts,
-						totalViews: totalViews
+						newViews: newViews
 					});
 					return;
 				}
@@ -472,6 +538,8 @@ function scanUserPosts(username, daysBack) {
 				var tweet = allTweets[tweetIndex];
 				var text = tweet.text || '';
 				var lowerText = text.toLowerCase();
+				var postId = tweet.id;
+				var currentViews = tweet.public_metrics && tweet.public_metrics.impression_count ? tweet.public_metrics.impression_count : 0;
 
 				// Debug: Log each post's text to see what we're checking
 				console.log('[SCAN_USER_POSTS] Post text: "' + text.substring(0, 100) + (text.length > 100 ? '...' : '') + '"');
@@ -483,16 +551,17 @@ function scanUserPosts(username, daysBack) {
 					console.log('[SCAN_USER_POSTS] Contains clubmoon.fun directly: true');
 					clubMoonPosts++;
 
-					// Only count views from posts that contain "clubmoon.fun"
-					if (tweet.public_metrics && tweet.public_metrics.impression_count) {
-						totalViews += tweet.public_metrics.impression_count;
-						console.log('[SCAN_USER_POSTS] ClubMoon post found! Views: ' + tweet.public_metrics.impression_count);
-					} else {
-						console.log('[SCAN_USER_POSTS] ClubMoon post found but no impression_count available');
-					}
-
-					// Process next tweet
-					processTweet(tweetIndex + 1);
+					// Check database for existing post and calculate new views
+					checkAndUpdatePostViews(postId, username, currentViews).then(function(viewsToAdd) {
+						newViews += viewsToAdd;
+						console.log('[SCAN_USER_POSTS] ClubMoon post processed! New views added: ' + viewsToAdd + ', Current total new views: ' + newViews);
+						// Process next tweet
+						processTweet(tweetIndex + 1);
+					}).catch(function(err) {
+						console.error('[SCAN_USER_POSTS] Database error for post ' + postId + ':', err.message);
+						// Process next tweet even if database fails
+						processTweet(tweetIndex + 1);
+					});
 				} else {
 					// Check for t.co URLs and expand them
 					var urlRegex = /https:\/\/t\.co\/[a-zA-Z0-9]+/g;
@@ -516,17 +585,21 @@ function scanUserPosts(username, daysBack) {
 							if (hasClubMoonUrl) {
 								clubMoonPosts++;
 
-								// Only count views from posts that contain "clubmoon.fun"
-								if (tweet.public_metrics && tweet.public_metrics.impression_count) {
-									totalViews += tweet.public_metrics.impression_count;
-									console.log('[SCAN_USER_POSTS] ClubMoon post found via URL! Views: ' + tweet.public_metrics.impression_count);
-								} else {
-									console.log('[SCAN_USER_POSTS] ClubMoon post found via URL but no impression_count available');
-								}
+								// Check database for existing post and calculate new views
+								checkAndUpdatePostViews(postId, username, currentViews).then(function(viewsToAdd) {
+									newViews += viewsToAdd;
+									console.log('[SCAN_USER_POSTS] ClubMoon post via URL processed! New views added: ' + viewsToAdd + ', Current total new views: ' + newViews);
+									// Process next tweet
+									processTweet(tweetIndex + 1);
+								}).catch(function(err) {
+									console.error('[SCAN_USER_POSTS] Database error for post ' + postId + ':', err.message);
+									// Process next tweet even if database fails
+									processTweet(tweetIndex + 1);
+								});
+							} else {
+								// Process next tweet
+								processTweet(tweetIndex + 1);
 							}
-
-							// Process next tweet
-							processTweet(tweetIndex + 1);
 						}).catch(function(err) {
 							console.log('[SCAN_USER_POSTS] Error expanding URLs: ' + err.message);
 							// Process next tweet even if URL expansion fails
@@ -949,7 +1022,7 @@ socket.on('GET_USERS_LIST',function(pack){
 			var daysBack = parseFloat(data.daysBack) || 6.0;
 
 			if (!username) {
-				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, totalViews: 0, error: 'missing_username' });
+				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, newViews: 0, error: 'missing_username' });
 				return;
 			}
 
@@ -958,11 +1031,11 @@ socket.on('GET_USERS_LIST',function(pack){
 				socket.emit('SCAN_USER_POSTS_RESULT', results);
 			}).catch(function(err){
 				console.error('[SCAN_USER_POSTS] error:', err && err.message ? err.message : err);
-				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, totalViews: 0, error: 'scan_failed' });
+				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, newViews: 0, error: 'scan_failed' });
 			});
 		} catch (e) {
 			console.error('[SCAN_USER_POSTS] bad payload');
-			socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, totalViews: 0, error: 'bad_payload' });
+			socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, newViews: 0, error: 'bad_payload' });
 		}
 	});//END_SOCKET_ON
 
