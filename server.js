@@ -216,7 +216,7 @@ async function logServerWalletInfo() {
 
         // List multiple accounts to help user find the right one
         console.log('[SOLANA] 📋 Listing all possible accounts (0-9) from your seed phrase:');
-        console.log('[SOLANA] Checking both BIP39 and hash-based derivations...');
+        console.log('[SOLANA] 🔍 Testing multiple BIP44 derivation paths for each account...');
 
         for (let accountIndex = 0; accountIndex <= 9; accountIndex++) {
             const accountKeypair = keypairFromSeedPhraseWithAccount(process.env.SERVER_WALLET_SEED_PHRASE, accountIndex);
@@ -254,7 +254,12 @@ async function logServerWalletInfo() {
         // Also try the simple hash method (what Phantom might be using)
         console.log('[SOLANA] 🔍 Also checking simple hash method (Phantom-style)...');
         try {
-            const seed = process.env.SERVER_WALLET_SEED_PHRASE.split(' ').join(''); // Remove spaces
+            const seedPhrase = process.env.SERVER_WALLET_SEED_PHRASE;
+            console.log(`[SOLANA] 📝 Seed phrase has ${seedPhrase.split(' ').length} words`);
+            console.log(`[SOLANA] 🔤 First 3 words: ${seedPhrase.split(' ').slice(0, 3).join(' ')}`);
+            console.log(`[SOLANA] 🔤 Last 3 words: ${seedPhrase.split(' ').slice(-3).join(' ')}`);
+
+            const seed = seedPhrase.split(' ').join(''); // Remove spaces
             const hash = crypto.createHash('sha256').update(seed).digest();
             const seedBytes = new Uint8Array(hash.slice(0, 32));
             const hashKeypair = Keypair.fromSeed(seedBytes);
@@ -268,6 +273,10 @@ async function logServerWalletInfo() {
             if (hashAddress === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
                 console.log(`[SOLANA] 🎯 SUCCESS! Hash method matches your Phantom wallet!`);
                 console.log(`[SOLANA] 💡 Your Phantom wallet uses simple hash derivation, not BIP39`);
+            } else {
+                console.log(`[SOLANA] ❌ Hash method also doesn't match your expected address`);
+                console.log(`[SOLANA] Expected: 5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7`);
+                console.log(`[SOLANA] Got:      ${hashAddress}`);
             }
         } catch (hashError) {
             console.log(`[SOLANA] Hash method check failed: ${hashError.message}`);
