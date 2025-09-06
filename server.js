@@ -63,7 +63,7 @@ function keypairFromSeedPhrase(seedPhrase) {
 
     // FIRST: Try multiple BIP44 derivation paths (what Phantom might use)
     const derivationPaths = [
-        "m/44'/501'/0'/0'",  // Standard Solana Account 0 (Most Common)
+        "m/44'/501'/0'",  // Standard Solana Account 0 (Most Common)
         "m/44'/501'/1'/0'",  // Standard Solana Account 1
         "m/44'/501'/2'/0'",  // Standard Solana Account 2
         "m/44'/501'/0'/1'",  // Change address 1
