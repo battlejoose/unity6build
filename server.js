@@ -63,19 +63,23 @@ function keypairFromSeedPhrase(seedPhrase) {
 
     // FIRST: Try multiple BIP44 derivation paths (what Phantom might use)
     const derivationPaths = [
-        "m/44'/501'/0'/0'",  // Standard Solana Account 0
+        "m/44'/501'/0'/0'",  // Standard Solana Account 0 (Most Common)
         "m/44'/501'/1'/0'",  // Standard Solana Account 1
+        "m/44'/501'/2'/0'",  // Standard Solana Account 2
         "m/44'/501'/0'/1'",  // Change address 1
         "m/44'/501'/1'/1'",  // Account 1, Change 1
+        "m/501'/0'/0'",      // Legacy/Deprecated path (some older wallets)
+        "m/501'/1'/0'",      // Legacy Account 1
+        "m/501'/0'/0/0'",    // Legacy with extra depth
         "m/44'/60'/0'/0'",   // Ethereum-style (some wallets use this)
         "m/44'/501'/0'/0'/0'" // Extra depth
     ];
 
-    console.log('[SOLANA] Attempting BIP44 derivation with multiple paths...');
+    console.log(`[SOLANA] 🔍 Testing ${derivationPaths.length} derivation paths (including legacy paths)...`);
 
     for (const derivationPath of derivationPaths) {
         try {
-            console.log(`[SOLANA] Trying derivation path: ${derivationPath}`);
+            console.log(`[SOLANA] Testing path: ${derivationPath}`);
 
             // Generate seed from mnemonic
             const seed = bip39.mnemonicToSeedSync(seedPhrase);
@@ -143,10 +147,12 @@ if (SERVER_WALLET_SEED_PHRASE && TOKEN_MINT_ADDRESS) {
 
 // Function to derive keypair from seed phrase with specific account index
 function keypairFromSeedPhraseWithAccount(seedPhrase, accountIndex = 0) {
-    // Try multiple BIP44 paths for this account
+    // Try multiple BIP44 paths for this account (including legacy paths)
     const pathsToTry = [
-        `m/44'/501'/${accountIndex}'/0'`,  // Standard Solana
+        `m/44'/501'/${accountIndex}'/0'`,  // Standard Solana (Most Common)
         `m/44'/501'/${accountIndex}'/1'`,  // Change address
+        `m/501'/${accountIndex}'/0'`,      // Legacy/Deprecated path
+        `m/501'/${accountIndex}'/0/0'`,    // Legacy with extra depth
         `m/44'/60'/${accountIndex}'/0'`,   // Ethereum-style
     ];
 
@@ -215,8 +221,8 @@ async function logServerWalletInfo() {
         }
 
         // List multiple accounts to help user find the right one
-        console.log('[SOLANA] 📋 Listing all possible accounts (0-9) from your seed phrase:');
-        console.log('[SOLANA] 🔍 Testing multiple BIP44 derivation paths for each account...');
+        console.log('[SOLANA] 📋 Testing accounts 0-9 with multiple derivation paths...');
+        console.log('[SOLANA] 🔍 Including standard BIP44, legacy, and deprecated paths...');
 
         for (let accountIndex = 0; accountIndex <= 9; accountIndex++) {
             const accountKeypair = keypairFromSeedPhraseWithAccount(process.env.SERVER_WALLET_SEED_PHRASE, accountIndex);
@@ -255,10 +261,6 @@ async function logServerWalletInfo() {
         console.log('[SOLANA] 🔍 Also checking simple hash method (Phantom-style)...');
         try {
             const seedPhrase = process.env.SERVER_WALLET_SEED_PHRASE;
-            console.log(`[SOLANA] 📝 Seed phrase has ${seedPhrase.split(' ').length} words`);
-            console.log(`[SOLANA] 🔤 First 3 words: ${seedPhrase.split(' ').slice(0, 3).join(' ')}`);
-            console.log(`[SOLANA] 🔤 Last 3 words: ${seedPhrase.split(' ').slice(-3).join(' ')}`);
-
             const seed = seedPhrase.split(' ').join(''); // Remove spaces
             const hash = crypto.createHash('sha256').update(seed).digest();
             const seedBytes = new Uint8Array(hash.slice(0, 32));
@@ -275,8 +277,6 @@ async function logServerWalletInfo() {
                 console.log(`[SOLANA] 💡 Your Phantom wallet uses simple hash derivation, not BIP39`);
             } else {
                 console.log(`[SOLANA] ❌ Hash method also doesn't match your expected address`);
-                console.log(`[SOLANA] Expected: 5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7`);
-                console.log(`[SOLANA] Got:      ${hashAddress}`);
             }
         } catch (hashError) {
             console.log(`[SOLANA] Hash method check failed: ${hashError.message}`);
