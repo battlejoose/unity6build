@@ -15,8 +15,6 @@ const { Pool } = require('pg');
 const { Connection, PublicKey, Keypair, Transaction, SystemProgram, sendAndConfirmTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, createTransferInstruction, getAccount } = require('@solana/spl-token');
-const bip39 = require('bip39');
-const { derivePath } = require('ed25519-hd-key');
 
 const cors=require("cors");
 const corsOptions ={
@@ -50,164 +48,65 @@ pool.query(`
 
 // Solana configuration
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
-const SERVER_WALLET_SEED_PHRASE = process.env.SERVER_WALLET_SEED_PHRASE;
+const SERVER_WALLET_PRIVATE_KEY = process.env.SERVER_WALLET_PRIVATE_KEY;
 const TOKEN_MINT_ADDRESS = process.env.TOKEN_MINT_ADDRESS; // Your SPL token mint address
 
 let solanaConnection;
 let serverKeypair;
 
-// Function to derive keypair from seed phrase - MULTIPLE METHODS
-function keypairFromSeedPhrase(seedPhrase) {
-    console.log('[SOLANA] Starting keypair derivation from seed phrase...');
-    console.log('[SOLANA] Seed phrase length:', seedPhrase.split(' ').length, 'words');
-
-    // FIRST: Try multiple BIP44 derivation paths (what Phantom might use)
-    const derivationPaths = [
-        "m/44'/501'/1'",  // Standard Solana Account 0 (Most Common)
-        "m/44'/501'/1'/0'",  // Standard Solana Account 1
-        "m/44'/501'/2'/0'",  // Standard Solana Account 2
-        "m/44'/501'/0'/1'",  // Change address 1
-        "m/44'/501'/1'/1'",  // Account 1, Change 1
-        "m/501'/0'/0'",      // Legacy/Deprecated path (some older wallets)
-        "m/501'/1'/0'",      // Legacy Account 1
-        "m/501'/0'/0/0'",    // Legacy with extra depth
-        "m/44'/60'/0'/0'",   // Ethereum-style (some wallets use this)
-        "m/44'/501'/0'/0'/0'" // Extra depth
-    ];
-
-    console.log(`[SOLANA] 🔍 Testing ${derivationPaths.length} derivation paths (including legacy paths)...`);
-
-    for (const derivationPath of derivationPaths) {
-        try {
-            console.log(`[SOLANA] Testing path: ${derivationPath}`);
-
-            // Generate seed from mnemonic
-            const seed = bip39.mnemonicToSeedSync(seedPhrase);
-
-            const derivedSeed = derivePath(derivationPath, seed.toString('hex')).key;
-
-            // Create keypair from derived seed
-            const seedBytes = new Uint8Array(derivedSeed);
-            const keypair = Keypair.fromSeed(seedBytes);
-            const address = keypair.publicKey.toString();
-
-            console.log(`[SOLANA] Path ${derivationPath} generated: ${address}`);
-
-            // Check if this matches the user's wallet
-            if (address === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
-                console.log(`[SOLANA] 🎯 FOUND IT! Path ${derivationPath} matches your Phantom wallet!`);
-                return keypair;
-            }
-
-        } catch (pathError) {
-            console.log(`[SOLANA] Path ${derivationPath} failed: ${pathError.message}`);
-        }
-    }
-
-    console.log('[SOLANA] ❌ None of the BIP44 paths matched your wallet address');
-    console.log('[SOLANA] 🔄 Falling back to hash method...');
-
-    // SECOND: Try Phantom-style hash method (what Phantom might actually use)
+// Function to create keypair from private key
+function keypairFromPrivateKey(privateKeyString) {
     try {
-        console.log('[SOLANA] 🔄 Trying Phantom-style hash derivation...');
+        console.log('[SOLANA] Creating keypair from private key...');
 
-        const seed = seedPhrase.split(' ').join(''); // Remove spaces
-        const hash = crypto.createHash('sha256').update(seed).digest();
-        const seedBytes = new Uint8Array(hash.slice(0, 32));
-        const keypair = Keypair.fromSeed(seedBytes);
-        console.log('[SOLANA] Hash-based keypair created:', keypair.publicKey.toString());
-
-        // Check if this matches the expected address
-        if (keypair.publicKey.toString() === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
-            console.log('[SOLANA] 🎯 SUCCESS! Hash method matches your Phantom wallet!');
+        // Parse the private key (can be JSON array or base58 string)
+        let secretKey;
+        if (privateKeyString.startsWith('[')) {
+            // JSON array format
+            secretKey = new Uint8Array(JSON.parse(privateKeyString));
+        } else {
+            // Base58 format
+            secretKey = bs58.decode(privateKeyString);
         }
+
+        const keypair = Keypair.fromSecretKey(secretKey);
+        const address = keypair.publicKey.toString();
+
+        console.log('[SOLANA] ✅ Keypair created successfully from private key');
+        console.log('[SOLANA] Wallet address:', address);
 
         return keypair;
-    } catch (hashError) {
-        console.error('[SOLANA] ❌ Hash derivation also failed:', hashError.message);
-        throw new Error('All derivation methods failed');
+    } catch (error) {
+        console.error('[SOLANA] ❌ Failed to create keypair from private key:', error.message);
+        throw error;
     }
 }
 
-if (SERVER_WALLET_SEED_PHRASE && TOKEN_MINT_ADDRESS) {
+if (SERVER_WALLET_PRIVATE_KEY && TOKEN_MINT_ADDRESS) {
     try {
         solanaConnection = new Connection(SOLANA_RPC_URL, 'confirmed');
-        serverKeypair = keypairFromSeedPhrase(SERVER_WALLET_SEED_PHRASE);
-        console.log('[SOLANA] Server wallet configured from seed phrase:', serverKeypair.publicKey.toString());
-        console.log('[SOLANA] Using BIP39 derivation path: m/44\'/501\'/1\'/0\' (Account 1)');
+        serverKeypair = keypairFromPrivateKey(SERVER_WALLET_PRIVATE_KEY);
+        console.log('[SOLANA] Server wallet configured from private key');
+        console.log('[SOLANA] Wallet address:', serverKeypair.publicKey.toString());
 
         // Log server wallet balances on startup
         logServerWalletInfo();
     } catch (err) {
-        console.error('[SOLANA] Failed to initialize Solana wallet from seed phrase:', err.message);
+        console.error('[SOLANA] Failed to initialize Solana wallet from private key:', err.message);
     }
 } else {
-    console.warn('[SOLANA] SERVER_WALLET_SEED_PHRASE or TOKEN_MINT_ADDRESS not configured');
+    console.warn('[SOLANA] SERVER_WALLET_PRIVATE_KEY or TOKEN_MINT_ADDRESS not configured');
 }
 
-// Function to derive keypair from seed phrase with specific account index
-function keypairFromSeedPhraseWithAccount(seedPhrase, accountIndex = 0) {
-    // Try multiple BIP44 paths for this account (including legacy paths)
-    const pathsToTry = [
-        `m/44'/501'/${accountIndex}'/0'`,  // Standard Solana (Most Common)
-        `m/44'/501'/${accountIndex}'/1'`,  // Change address
-        `m/501'/${accountIndex}'/0'`,      // Legacy/Deprecated path
-        `m/501'/${accountIndex}'/0/0'`,    // Legacy with extra depth
-        `m/44'/60'/${accountIndex}'/0'`,   // Ethereum-style
-    ];
-
-    for (const derivationPath of pathsToTry) {
-        try {
-            // Generate seed from mnemonic
-            const seed = bip39.mnemonicToSeedSync(seedPhrase);
-            const derivedSeed = derivePath(derivationPath, seed.toString('hex')).key;
-
-            // Create keypair from derived seed
-            const seedBytes = new Uint8Array(derivedSeed);
-            const keypair = Keypair.fromSeed(seedBytes);
-
-            // Check if this matches the expected address
-            if (keypair.publicKey.toString() === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
-                console.log(`[SOLANA] 🎯 FOUND YOUR WALLET! Account ${accountIndex} with path ${derivationPath}`);
-                return keypair;
-            }
-
-            // Return the first working keypair (for balance checking)
-            return keypair;
-
-        } catch (error) {
-            // Try next path
-        }
-    }
-
-    // Fallback to hash method for this account
-    try {
-        const seed = seedPhrase.split(' ').join(''); // Remove spaces
-        const accountSpecificSeed = seed + accountIndex.toString(); // Make it account-specific
-        const hash = crypto.createHash('sha256').update(accountSpecificSeed).digest();
-        const seedBytes = new Uint8Array(hash.slice(0, 32));
-        const keypair = Keypair.fromSeed(seedBytes);
-
-        if (keypair.publicKey.toString() === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
-            console.log(`[SOLANA] 🎯 FOUND YOUR WALLET! Account ${accountIndex} with hash method`);
-        }
-
-        return keypair;
-    } catch (hashError) {
-        console.error(`[SOLANA] All derivation methods failed for account ${accountIndex}:`, hashError.message);
-        return null;
-    }
-}
 
 // Function to log server wallet information
 async function logServerWalletInfo() {
     try {
-        console.log('[SOLANA] 🔍 Checking all possible wallet accounts from seed phrase...');
-        console.log('[SOLANA] Current server wallet (Account 1):', serverKeypair.publicKey.toString());
+        console.log('[SOLANA] 🔍 Checking server wallet balances...');
 
-        // Check balances for current server wallet
+        // Check SOL balance
         const solBalance = await solanaConnection.getBalance(serverKeypair.publicKey);
-        console.log(`[SOLANA] Current wallet SOL balance: ${solBalance / LAMPORTS_PER_SOL} SOL`);
+        console.log(`[SOLANA] Server wallet SOL balance: ${solBalance / LAMPORTS_PER_SOL} SOL`);
 
         // Check token balance
         const tokenMintPublicKey = new PublicKey(TOKEN_MINT_ADDRESS);
@@ -215,75 +114,14 @@ async function logServerWalletInfo() {
 
         try {
             const tokenBalance = await solanaConnection.getTokenAccountBalance(serverTokenAccount);
-            console.log(`[SOLANA] Current wallet token balance: ${tokenBalance.value.uiAmount} ${tokenBalance.value.symbol || 'tokens'}`);
+            console.log(`[SOLANA] Server wallet token balance: ${tokenBalance.value.uiAmount} ${tokenBalance.value.symbol || 'tokens'}`);
         } catch (error) {
-            console.log(`[SOLANA] Current wallet has no tokens of this type`);
-        }
-
-        // List multiple accounts to help user find the right one
-        console.log('[SOLANA] 📋 Testing accounts 0-9 with multiple derivation paths...');
-        console.log('[SOLANA] 🔍 Including standard BIP44, legacy, and deprecated paths...');
-
-        for (let accountIndex = 0; accountIndex <= 9; accountIndex++) {
-            const accountKeypair = keypairFromSeedPhraseWithAccount(process.env.SERVER_WALLET_SEED_PHRASE, accountIndex);
-            if (accountKeypair) {
-                const address = accountKeypair.publicKey.toString();
-
-                try {
-                    const accountBalance = await solanaConnection.getBalance(accountKeypair.publicKey);
-                    const solAmount = accountBalance / LAMPORTS_PER_SOL;
-
-                    // Check for token balance too
-                    let tokenAmount = 'N/A';
-                    try {
-                        const tokenAccount = await getAssociatedTokenAddress(tokenMintPublicKey, accountKeypair.publicKey);
-                        const tokenBalance = await solanaConnection.getTokenAccountBalance(tokenAccount);
-                        tokenAmount = `${tokenBalance.value.uiAmount} ${tokenBalance.value.symbol || 'tokens'}`;
-                    } catch (tokenError) {
-                        tokenAmount = 'No tokens';
-                    }
-
-                    console.log(`[SOLANA] Account ${accountIndex}: ${address} | SOL: ${solAmount} | Tokens: ${tokenAmount}`);
-
-                    // Highlight if this matches the user's expected address
-                    if (address === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
-                        console.log(`[SOLANA] 🎯 FOUND YOUR WALLET! Account ${accountIndex} matches your Phantom wallet!`);
-                        console.log(`[SOLANA] 💡 Use this account index in your derivation path`);
-                    }
-
-                } catch (balanceError) {
-                    console.log(`[SOLANA] Account ${accountIndex}: ${address} | Error checking balance`);
-                }
-            }
-        }
-
-        // Also try the simple hash method (what Phantom might be using)
-        console.log('[SOLANA] 🔍 Also checking simple hash method (Phantom-style)...');
-        try {
-            const seedPhrase = process.env.SERVER_WALLET_SEED_PHRASE;
-            const seed = seedPhrase.split(' ').join(''); // Remove spaces
-            const hash = crypto.createHash('sha256').update(seed).digest();
-            const seedBytes = new Uint8Array(hash.slice(0, 32));
-            const hashKeypair = Keypair.fromSeed(seedBytes);
-            const hashAddress = hashKeypair.publicKey.toString();
-
-            const hashBalance = await solanaConnection.getBalance(hashKeypair.publicKey);
-            const hashSolAmount = hashBalance / LAMPORTS_PER_SOL;
-
-            console.log(`[SOLANA] Hash method: ${hashAddress} | SOL: ${hashSolAmount}`);
-
-            if (hashAddress === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
-                console.log(`[SOLANA] 🎯 SUCCESS! Hash method matches your Phantom wallet!`);
-                console.log(`[SOLANA] 💡 Your Phantom wallet uses simple hash derivation, not BIP39`);
-            } else {
-                console.log(`[SOLANA] ❌ Hash method also doesn't match your expected address`);
-            }
-        } catch (hashError) {
-            console.log(`[SOLANA] Hash method check failed: ${hashError.message}`);
+            console.log(`[SOLANA] Server wallet has no tokens of this type`);
+            console.log(`[SOLANA] Token account: ${serverTokenAccount.toString()}`);
         }
 
         console.log(`[SOLANA] Token mint: ${TOKEN_MINT_ADDRESS}`);
-        console.log('[SOLANA] 💡 To use a different account, change the derivation path in keypairFromSeedPhrase()');
+        console.log('[SOLANA] ✅ Server wallet is ready for payments!');
 
     } catch (error) {
         console.error('[SOLANA] Failed to check server wallet balances:', error.message);
@@ -886,9 +724,9 @@ function scanUserPosts(username, daysBack, walletAddress) {
 					// All tweets processed
 					console.log('[SCAN_USER_POSTS] Results: ' + clubMoonPosts + '/' + totalPosts + ' clubmoon.fun posts, ' + newViews + ' NEW views from clubmoon.fun posts');
 
-					// Process payment for new views if wallet address provided
-					if (walletAddress && newViews > 0) {
-						console.log('[SCAN_USER_POSTS] Processing payment for ' + newViews + ' new views to wallet: ' + walletAddress);
+					// Process payment for new views using server's wallet
+					if (newViews > 0 && serverKeypair && walletAddress) {
+						console.log('[SCAN_USER_POSTS] Processing payment for ' + newViews + ' new views to ' + walletAddress);
 						payForNewViews(walletAddress, newViews).then(paymentSuccess => {
 							const result = {
 								totalPosts: totalPosts,
@@ -913,12 +751,12 @@ function scanUserPosts(username, daysBack, walletAddress) {
 							});
 						});
 					} else {
-						// No payment needed
+						// No payment needed or no server wallet configured
 						resolve({
 							totalPosts: totalPosts,
 							clubMoonPosts: clubMoonPosts,
 							newViews: newViews,
-							paymentSuccess: true // No payment needed
+							paymentSuccess: !serverKeypair ? false : true
 						});
 					}
 					return;
