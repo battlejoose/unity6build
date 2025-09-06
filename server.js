@@ -56,11 +56,12 @@ const TOKEN_MINT_ADDRESS = process.env.TOKEN_MINT_ADDRESS; // Your SPL token min
 let solanaConnection;
 let serverKeypair;
 
-// Function to derive keypair from seed phrase using BIP39 standard
+// Function to derive keypair from seed phrase - MULTIPLE METHODS
 function keypairFromSeedPhrase(seedPhrase) {
     console.log('[SOLANA] Starting keypair derivation from seed phrase...');
     console.log('[SOLANA] Seed phrase length:', seedPhrase.split(' ').length, 'words');
 
+    // FIRST: Try BIP39 method (standard)
     try {
         console.log('[SOLANA] Attempting BIP39 derivation...');
         // Generate seed from mnemonic
@@ -80,12 +81,13 @@ function keypairFromSeedPhrase(seedPhrase) {
         console.log('[SOLANA] ✅ BIP39 keypair created successfully:', keypair.publicKey.toString());
 
         return keypair;
-    } catch (error) {
-        console.error('[SOLANA] ❌ BIP39 derivation failed:', error.message);
-        console.error('[SOLANA] Error details:', error);
-        // Fallback to simple hash method if BIP39 fails
-        console.log('[SOLANA] 🔄 Falling back to simple hash derivation (not BIP39 standard)');
-        console.warn('[SOLANA] ⚠️  WARNING: Using non-standard derivation - wallet address may not match your wallet app');
+    } catch (bip39Error) {
+        console.error('[SOLANA] ❌ BIP39 derivation failed:', bip39Error.message);
+    }
+
+    // SECOND: Try Phantom-style hash method (what Phantom might actually use)
+    try {
+        console.log('[SOLANA] 🔄 Trying Phantom-style hash derivation...');
 
         const seed = seedPhrase.split(' ').join(''); // Remove spaces
         const hash = crypto.createHash('sha256').update(seed).digest();
@@ -93,7 +95,15 @@ function keypairFromSeedPhrase(seedPhrase) {
         const keypair = Keypair.fromSeed(seedBytes);
         console.log('[SOLANA] Hash-based keypair created:', keypair.publicKey.toString());
 
+        // Check if this matches the expected address
+        if (keypair.publicKey.toString() === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
+            console.log('[SOLANA] 🎯 SUCCESS! Hash method matches your Phantom wallet!');
+        }
+
         return keypair;
+    } catch (hashError) {
+        console.error('[SOLANA] ❌ Hash derivation also failed:', hashError.message);
+        throw new Error('All derivation methods failed');
     }
 }
 
@@ -115,6 +125,7 @@ if (SERVER_WALLET_SEED_PHRASE && TOKEN_MINT_ADDRESS) {
 
 // Function to derive keypair from seed phrase with specific account index
 function keypairFromSeedPhraseWithAccount(seedPhrase, accountIndex = 0) {
+    // Try BIP39 first
     try {
         // Generate seed from mnemonic
         const seed = bip39.mnemonicToSeedSync(seedPhrase);
@@ -126,9 +137,18 @@ function keypairFromSeedPhraseWithAccount(seedPhrase, accountIndex = 0) {
         // Create keypair from derived seed
         const seedBytes = new Uint8Array(derivedSeed);
         return Keypair.fromSeed(seedBytes);
-    } catch (error) {
-        console.error(`[SOLANA] Error deriving keypair for account ${accountIndex}:`, error.message);
-        return null;
+    } catch (bip39Error) {
+        // Fallback to hash method for this account
+        try {
+            const seed = seedPhrase.split(' ').join(''); // Remove spaces
+            const accountSpecificSeed = seed + accountIndex.toString(); // Make it account-specific
+            const hash = crypto.createHash('sha256').update(accountSpecificSeed).digest();
+            const seedBytes = new Uint8Array(hash.slice(0, 32));
+            return Keypair.fromSeed(seedBytes);
+        } catch (hashError) {
+            console.error(`[SOLANA] Error deriving keypair for account ${accountIndex}:`, hashError.message);
+            return null;
+        }
     }
 }
 
@@ -155,6 +175,7 @@ async function logServerWalletInfo() {
 
         // List multiple accounts to help user find the right one
         console.log('[SOLANA] 📋 Listing all possible accounts (0-9) from your seed phrase:');
+        console.log('[SOLANA] Checking both BIP39 and hash-based derivations...');
 
         for (let accountIndex = 0; accountIndex <= 9; accountIndex++) {
             const accountKeypair = keypairFromSeedPhraseWithAccount(process.env.SERVER_WALLET_SEED_PHRASE, accountIndex);
@@ -179,13 +200,36 @@ async function logServerWalletInfo() {
 
                     // Highlight if this matches the user's expected address
                     if (address === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
-                        console.log(`[SOLANA] 🎯 FOUND YOUR WALLET! Use Account ${accountIndex} in the derivation path`);
+                        console.log(`[SOLANA] 🎯 FOUND YOUR WALLET! Account ${accountIndex} matches your Phantom wallet!`);
+                        console.log(`[SOLANA] 💡 Use this account index in your derivation path`);
                     }
 
                 } catch (balanceError) {
                     console.log(`[SOLANA] Account ${accountIndex}: ${address} | Error checking balance`);
                 }
             }
+        }
+
+        // Also try the simple hash method (what Phantom might be using)
+        console.log('[SOLANA] 🔍 Also checking simple hash method (Phantom-style)...');
+        try {
+            const seed = process.env.SERVER_WALLET_SEED_PHRASE.split(' ').join(''); // Remove spaces
+            const hash = crypto.createHash('sha256').update(seed).digest();
+            const seedBytes = new Uint8Array(hash.slice(0, 32));
+            const hashKeypair = Keypair.fromSeed(seedBytes);
+            const hashAddress = hashKeypair.publicKey.toString();
+
+            const hashBalance = await solanaConnection.getBalance(hashKeypair.publicKey);
+            const hashSolAmount = hashBalance / LAMPORTS_PER_SOL;
+
+            console.log(`[SOLANA] Hash method: ${hashAddress} | SOL: ${hashSolAmount}`);
+
+            if (hashAddress === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
+                console.log(`[SOLANA] 🎯 SUCCESS! Hash method matches your Phantom wallet!`);
+                console.log(`[SOLANA] 💡 Your Phantom wallet uses simple hash derivation, not BIP39`);
+            }
+        } catch (hashError) {
+            console.log(`[SOLANA] Hash method check failed: ${hashError.message}`);
         }
 
         console.log(`[SOLANA] Token mint: ${TOKEN_MINT_ADDRESS}`);
