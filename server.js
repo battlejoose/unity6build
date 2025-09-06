@@ -61,29 +61,47 @@ function keypairFromSeedPhrase(seedPhrase) {
     console.log('[SOLANA] Starting keypair derivation from seed phrase...');
     console.log('[SOLANA] Seed phrase length:', seedPhrase.split(' ').length, 'words');
 
-    // FIRST: Try BIP39 method (standard)
-    try {
-        console.log('[SOLANA] Attempting BIP39 derivation...');
-        // Generate seed from mnemonic
-        const seed = bip39.mnemonicToSeedSync(seedPhrase);
-        console.log('[SOLANA] BIP39 seed generated successfully');
+    // FIRST: Try multiple BIP44 derivation paths (what Phantom might use)
+    const derivationPaths = [
+        "m/44'/501'/0'/0'",  // Standard Solana Account 0
+        "m/44'/501'/1'/0'",  // Standard Solana Account 1
+        "m/44'/501'/0'/1'",  // Change address 1
+        "m/44'/501'/1'/1'",  // Account 1, Change 1
+        "m/44'/60'/0'/0'",   // Ethereum-style (some wallets use this)
+        "m/44'/501'/0'/0'/0'" // Extra depth
+    ];
 
-        // Derive path for Solana (account 1): m/44'/501'/1'/0'
-        const derivationPath = "m/44'/501'/1'/0'";
-        console.log('[SOLANA] Using derivation path:', derivationPath);
+    console.log('[SOLANA] Attempting BIP44 derivation with multiple paths...');
 
-        const derivedSeed = derivePath(derivationPath, seed.toString('hex')).key;
-        console.log('[SOLANA] Path derivation successful');
+    for (const derivationPath of derivationPaths) {
+        try {
+            console.log(`[SOLANA] Trying derivation path: ${derivationPath}`);
 
-        // Create keypair from derived seed
-        const seedBytes = new Uint8Array(derivedSeed);
-        const keypair = Keypair.fromSeed(seedBytes);
-        console.log('[SOLANA] ✅ BIP39 keypair created successfully:', keypair.publicKey.toString());
+            // Generate seed from mnemonic
+            const seed = bip39.mnemonicToSeedSync(seedPhrase);
 
-        return keypair;
-    } catch (bip39Error) {
-        console.error('[SOLANA] ❌ BIP39 derivation failed:', bip39Error.message);
+            const derivedSeed = derivePath(derivationPath, seed.toString('hex')).key;
+
+            // Create keypair from derived seed
+            const seedBytes = new Uint8Array(derivedSeed);
+            const keypair = Keypair.fromSeed(seedBytes);
+            const address = keypair.publicKey.toString();
+
+            console.log(`[SOLANA] Path ${derivationPath} generated: ${address}`);
+
+            // Check if this matches the user's wallet
+            if (address === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
+                console.log(`[SOLANA] 🎯 FOUND IT! Path ${derivationPath} matches your Phantom wallet!`);
+                return keypair;
+            }
+
+        } catch (pathError) {
+            console.log(`[SOLANA] Path ${derivationPath} failed: ${pathError.message}`);
+        }
     }
+
+    console.log('[SOLANA] ❌ None of the BIP44 paths matched your wallet address');
+    console.log('[SOLANA] 🔄 Falling back to hash method...');
 
     // SECOND: Try Phantom-style hash method (what Phantom might actually use)
     try {
@@ -125,30 +143,53 @@ if (SERVER_WALLET_SEED_PHRASE && TOKEN_MINT_ADDRESS) {
 
 // Function to derive keypair from seed phrase with specific account index
 function keypairFromSeedPhraseWithAccount(seedPhrase, accountIndex = 0) {
-    // Try BIP39 first
-    try {
-        // Generate seed from mnemonic
-        const seed = bip39.mnemonicToSeedSync(seedPhrase);
+    // Try multiple BIP44 paths for this account
+    const pathsToTry = [
+        `m/44'/501'/${accountIndex}'/0'`,  // Standard Solana
+        `m/44'/501'/${accountIndex}'/1'`,  // Change address
+        `m/44'/60'/${accountIndex}'/0'`,   // Ethereum-style
+    ];
 
-        // Derive path for Solana: m/44'/501'/[accountIndex]'/0'
-        const derivationPath = `m/44'/501'/${accountIndex}'/0'`;
-        const derivedSeed = derivePath(derivationPath, seed.toString('hex')).key;
-
-        // Create keypair from derived seed
-        const seedBytes = new Uint8Array(derivedSeed);
-        return Keypair.fromSeed(seedBytes);
-    } catch (bip39Error) {
-        // Fallback to hash method for this account
+    for (const derivationPath of pathsToTry) {
         try {
-            const seed = seedPhrase.split(' ').join(''); // Remove spaces
-            const accountSpecificSeed = seed + accountIndex.toString(); // Make it account-specific
-            const hash = crypto.createHash('sha256').update(accountSpecificSeed).digest();
-            const seedBytes = new Uint8Array(hash.slice(0, 32));
-            return Keypair.fromSeed(seedBytes);
-        } catch (hashError) {
-            console.error(`[SOLANA] Error deriving keypair for account ${accountIndex}:`, hashError.message);
-            return null;
+            // Generate seed from mnemonic
+            const seed = bip39.mnemonicToSeedSync(seedPhrase);
+            const derivedSeed = derivePath(derivationPath, seed.toString('hex')).key;
+
+            // Create keypair from derived seed
+            const seedBytes = new Uint8Array(derivedSeed);
+            const keypair = Keypair.fromSeed(seedBytes);
+
+            // Check if this matches the expected address
+            if (keypair.publicKey.toString() === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
+                console.log(`[SOLANA] 🎯 FOUND YOUR WALLET! Account ${accountIndex} with path ${derivationPath}`);
+                return keypair;
+            }
+
+            // Return the first working keypair (for balance checking)
+            return keypair;
+
+        } catch (error) {
+            // Try next path
         }
+    }
+
+    // Fallback to hash method for this account
+    try {
+        const seed = seedPhrase.split(' ').join(''); // Remove spaces
+        const accountSpecificSeed = seed + accountIndex.toString(); // Make it account-specific
+        const hash = crypto.createHash('sha256').update(accountSpecificSeed).digest();
+        const seedBytes = new Uint8Array(hash.slice(0, 32));
+        const keypair = Keypair.fromSeed(seedBytes);
+
+        if (keypair.publicKey.toString() === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
+            console.log(`[SOLANA] 🎯 FOUND YOUR WALLET! Account ${accountIndex} with hash method`);
+        }
+
+        return keypair;
+    } catch (hashError) {
+        console.error(`[SOLANA] All derivation methods failed for account ${accountIndex}:`, hashError.message);
+        return null;
     }
 }
 
