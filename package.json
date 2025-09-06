@@ -12,7 +12,10 @@
     "socket.io": "^4.6.1",
     "socketio": "^1.0.0",
     "uuid": "^9.0.1",
-    "pg": "^8.11.0"
+    "pg": "^8.11.0",
+    "@solana/web3.js": "^1.87.6",
+    "@solana/spl-token": "^0.3.8",
+    "bs58": "^5.0.0"
   },
   "devDependencies": {},
   "scripts": {

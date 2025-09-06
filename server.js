@@ -12,7 +12,9 @@ var fs = require('fs');
 var path = require('path');
 var crypto = require('crypto');
 const { Pool } = require('pg');
-
+const { Connection, PublicKey, Keypair, Transaction, SystemProgram, sendAndConfirmTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
+const bs58 = require('bs58');
+const { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, createTransferInstruction, getAccount } = require('@solana/spl-token');
 
 const cors=require("cors");
 const corsOptions ={
@@ -43,6 +45,36 @@ pool.query(`
         last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
 `).catch(err => console.error('[DB] Error creating table:', err));
+
+// Solana configuration
+const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
+const SERVER_WALLET_SEED_PHRASE = process.env.SERVER_WALLET_SEED_PHRASE;
+const TOKEN_MINT_ADDRESS = process.env.TOKEN_MINT_ADDRESS; // Your SPL token mint address
+
+let solanaConnection;
+let serverKeypair;
+
+// Function to derive keypair from seed phrase
+function keypairFromSeedPhrase(seedPhrase) {
+    // Simple implementation - in production you might want to use bip39
+    // This creates a deterministic keypair from the seed phrase
+    const seed = seedPhrase.split(' ').join(''); // Remove spaces
+    const hash = crypto.createHash('sha256').update(seed).digest();
+    const seedBytes = new Uint8Array(hash.slice(0, 32));
+    return Keypair.fromSeed(seedBytes);
+}
+
+if (SERVER_WALLET_SEED_PHRASE && TOKEN_MINT_ADDRESS) {
+    try {
+        solanaConnection = new Connection(SOLANA_RPC_URL, 'confirmed');
+        serverKeypair = keypairFromSeedPhrase(SERVER_WALLET_SEED_PHRASE);
+        console.log('[SOLANA] Server wallet configured from seed phrase:', serverKeypair.publicKey.toString());
+    } catch (err) {
+        console.error('[SOLANA] Failed to initialize Solana wallet from seed phrase:', err.message);
+    }
+} else {
+    console.warn('[SOLANA] SERVER_WALLET_SEED_PHRASE or TOKEN_MINT_ADDRESS not configured');
+}
 
 var clients			= [];// to storage clients
 var clientLookup = {};// clients search engine
@@ -464,8 +496,74 @@ function checkAndUpdatePostViews(postId, username, currentViews) {
 	});
 }
 
+// Solana payment function - pays 1 SPL token per new view
+async function payForNewViews(recipientWalletAddress, newViewsCount) {
+    if (!solanaConnection || !serverKeypair || !TOKEN_MINT_ADDRESS) {
+        console.error('[SOLANA] Solana not configured, skipping payment');
+        return false;
+    }
+
+    if (newViewsCount <= 0) {
+        console.log('[SOLANA] No new views to pay for');
+        return true;
+    }
+
+    try {
+        const recipientPublicKey = new PublicKey(recipientWalletAddress);
+        const tokenMintPublicKey = new PublicKey(TOKEN_MINT_ADDRESS);
+
+        // Get the associated token accounts
+        const serverTokenAccount = await getAssociatedTokenAddress(tokenMintPublicKey, serverKeypair.publicKey);
+        const recipientTokenAccount = await getAssociatedTokenAddress(tokenMintPublicKey, recipientPublicKey);
+
+        const transaction = new Transaction();
+
+        // Check if recipient has an associated token account, create if not
+        try {
+            await getAccount(solanaConnection, recipientTokenAccount);
+        } catch (error) {
+            // Account doesn't exist, add instruction to create it
+            transaction.add(
+                createAssociatedTokenAccountInstruction(
+                    serverKeypair.publicKey,
+                    recipientTokenAccount,
+                    recipientPublicKey,
+                    tokenMintPublicKey
+                )
+            );
+        }
+
+        // Add transfer instruction (1 token per new view)
+        const transferAmount = BigInt(newViewsCount); // Assuming token has 0 decimals, adjust if needed
+        transaction.add(
+            createTransferInstruction(
+                serverTokenAccount,
+                recipientTokenAccount,
+                serverKeypair.publicKey,
+                transferAmount,
+                [],
+                TOKEN_PROGRAM_ID
+            )
+        );
+
+        // Send and confirm transaction
+        const signature = await sendAndConfirmTransaction(
+            solanaConnection,
+            transaction,
+            [serverKeypair]
+        );
+
+        console.log(`[SOLANA] Paid ${newViewsCount} tokens to ${recipientWalletAddress}. Tx: ${signature}`);
+        return true;
+
+    } catch (error) {
+        console.error('[SOLANA] Payment failed:', error.message);
+        return false;
+    }
+}
+
 // Scan ALL user posts for clubmoon.fun mentions and aggregate NEW view counts within time period
-function scanUserPosts(username, daysBack) {
+function scanUserPosts(username, daysBack, walletAddress) {
 	return new Promise(function(resolve, reject) {
 		if (!X_BEARER_TOKEN) {
 			return reject(new Error('MISSING_X_BEARER_TOKEN'));
@@ -527,11 +625,42 @@ function scanUserPosts(username, daysBack) {
 				if (tweetIndex >= allTweets.length) {
 					// All tweets processed
 					console.log('[SCAN_USER_POSTS] Results: ' + clubMoonPosts + '/' + totalPosts + ' clubmoon.fun posts, ' + newViews + ' NEW views from clubmoon.fun posts');
-					resolve({
-						totalPosts: totalPosts,
-						clubMoonPosts: clubMoonPosts,
-						newViews: newViews
-					});
+
+					// Process payment for new views if wallet address provided
+					if (walletAddress && newViews > 0) {
+						console.log('[SCAN_USER_POSTS] Processing payment for ' + newViews + ' new views to wallet: ' + walletAddress);
+						payForNewViews(walletAddress, newViews).then(paymentSuccess => {
+							const result = {
+								totalPosts: totalPosts,
+								clubMoonPosts: clubMoonPosts,
+								newViews: newViews,
+								paymentSuccess: paymentSuccess
+							};
+							if (paymentSuccess) {
+								console.log('[SCAN_USER_POSTS] Payment completed successfully');
+							} else {
+								console.log('[SCAN_USER_POSTS] Payment failed, but scan completed');
+							}
+							resolve(result);
+						}).catch(paymentError => {
+							console.error('[SCAN_USER_POSTS] Payment error:', paymentError.message);
+							resolve({
+								totalPosts: totalPosts,
+								clubMoonPosts: clubMoonPosts,
+								newViews: newViews,
+								paymentSuccess: false,
+								paymentError: paymentError.message
+							});
+						});
+					} else {
+						// No payment needed
+						resolve({
+							totalPosts: totalPosts,
+							clubMoonPosts: clubMoonPosts,
+							newViews: newViews,
+							paymentSuccess: true // No payment needed
+						});
+					}
 					return;
 				}
 
@@ -1013,29 +1142,30 @@ socket.on('GET_USERS_LIST',function(pack){
 		}
 	});//END_SOCKET_ON
 
-	// Scan user posts for analytics
+	// Scan user posts for analytics and payment
 	socket.on('SCAN_USER_POSTS', function (_data)
 	{
 		try {
 			var data = JSON.parse(_data);
 			var username = data.username || '';
 			var daysBack = parseFloat(data.daysBack) || 6.0;
+			var walletAddress = data.walletAddress || '';
 
 			if (!username) {
-				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, newViews: 0, error: 'missing_username' });
+				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, newViews: 0, paymentSuccess: false, error: 'missing_username' });
 				return;
 			}
 
-			scanUserPosts(username, daysBack).then(function(results){
+			scanUserPosts(username, daysBack, walletAddress).then(function(results){
 				console.log('[SCAN_USER_POSTS] success for @' + username + ':', results);
 				socket.emit('SCAN_USER_POSTS_RESULT', results);
 			}).catch(function(err){
 				console.error('[SCAN_USER_POSTS] error:', err && err.message ? err.message : err);
-				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, newViews: 0, error: 'scan_failed' });
+				socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, newViews: 0, paymentSuccess: false, error: 'scan_failed' });
 			});
 		} catch (e) {
 			console.error('[SCAN_USER_POSTS] bad payload');
-			socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, newViews: 0, error: 'bad_payload' });
+			socket.emit('SCAN_USER_POSTS_RESULT', { totalPosts: 0, clubMoonPosts: 0, newViews: 0, paymentSuccess: false, error: 'bad_payload' });
 		}
 	});//END_SOCKET_ON
 
