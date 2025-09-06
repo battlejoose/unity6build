@@ -15,6 +15,8 @@ const { Pool } = require('pg');
 const { Connection, PublicKey, Keypair, Transaction, SystemProgram, sendAndConfirmTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const { TOKEN_PROGRAM_ID, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, createTransferInstruction, getAccount } = require('@solana/spl-token');
+const bip39 = require('bip39');
+const { derivePath } = require('ed25519-hd-key');
 
 const cors=require("cors");
 const corsOptions ={
@@ -54,14 +56,29 @@ const TOKEN_MINT_ADDRESS = process.env.TOKEN_MINT_ADDRESS; // Your SPL token min
 let solanaConnection;
 let serverKeypair;
 
-// Function to derive keypair from seed phrase
+// Function to derive keypair from seed phrase using BIP39 standard
 function keypairFromSeedPhrase(seedPhrase) {
-    // Simple implementation - in production you might want to use bip39
-    // This creates a deterministic keypair from the seed phrase
-    const seed = seedPhrase.split(' ').join(''); // Remove spaces
-    const hash = crypto.createHash('sha256').update(seed).digest();
-    const seedBytes = new Uint8Array(hash.slice(0, 32));
-    return Keypair.fromSeed(seedBytes);
+    try {
+        // Generate seed from mnemonic
+        const seed = bip39.mnemonicToSeedSync(seedPhrase);
+
+        // Derive path for Solana (account 0): m/44'/501'/0'/0'
+        const derivationPath = "m/44'/501'/0'/0'";
+        const derivedSeed = derivePath(derivationPath, seed.toString('hex')).key;
+
+        // Create keypair from derived seed
+        const seedBytes = new Uint8Array(derivedSeed);
+        return Keypair.fromSeed(seedBytes);
+    } catch (error) {
+        console.error('[SOLANA] Error deriving keypair from seed phrase:', error.message);
+        // Fallback to simple hash method if BIP39 fails
+        console.log('[SOLANA] Falling back to simple hash derivation (not BIP39 standard)');
+        console.warn('[SOLANA] WARNING: Using non-standard derivation - wallet address may not match your wallet app');
+        const seed = seedPhrase.split(' ').join(''); // Remove spaces
+        const hash = crypto.createHash('sha256').update(seed).digest();
+        const seedBytes = new Uint8Array(hash.slice(0, 32));
+        return Keypair.fromSeed(seedBytes);
+    }
 }
 
 if (SERVER_WALLET_SEED_PHRASE && TOKEN_MINT_ADDRESS) {
@@ -69,6 +86,7 @@ if (SERVER_WALLET_SEED_PHRASE && TOKEN_MINT_ADDRESS) {
         solanaConnection = new Connection(SOLANA_RPC_URL, 'confirmed');
         serverKeypair = keypairFromSeedPhrase(SERVER_WALLET_SEED_PHRASE);
         console.log('[SOLANA] Server wallet configured from seed phrase:', serverKeypair.publicKey.toString());
+        console.log('[SOLANA] Using BIP39 derivation path: m/44\'/501\'/0\'/0\' (Account 0)');
 
         // Log server wallet balances on startup
         logServerWalletInfo();
