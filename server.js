@@ -69,11 +69,43 @@ if (SERVER_WALLET_SEED_PHRASE && TOKEN_MINT_ADDRESS) {
         solanaConnection = new Connection(SOLANA_RPC_URL, 'confirmed');
         serverKeypair = keypairFromSeedPhrase(SERVER_WALLET_SEED_PHRASE);
         console.log('[SOLANA] Server wallet configured from seed phrase:', serverKeypair.publicKey.toString());
+
+        // Log server wallet balances on startup
+        logServerWalletInfo();
     } catch (err) {
         console.error('[SOLANA] Failed to initialize Solana wallet from seed phrase:', err.message);
     }
 } else {
     console.warn('[SOLANA] SERVER_WALLET_SEED_PHRASE or TOKEN_MINT_ADDRESS not configured');
+}
+
+// Function to log server wallet information
+async function logServerWalletInfo() {
+    try {
+        console.log('[SOLANA] Checking server wallet balances...');
+
+        // Log SOL balance
+        const solBalance = await solanaConnection.getBalance(serverKeypair.publicKey);
+        console.log(`[SOLANA] Server wallet SOL balance: ${solBalance / LAMPORTS_PER_SOL} SOL`);
+
+        // Log SPL token balance
+        const tokenMintPublicKey = new PublicKey(TOKEN_MINT_ADDRESS);
+        const serverTokenAccount = await getAssociatedTokenAddress(tokenMintPublicKey, serverKeypair.publicKey);
+
+        try {
+            const tokenBalance = await solanaConnection.getTokenAccountBalance(serverTokenAccount);
+            console.log(`[SOLANA] Server wallet token balance: ${tokenBalance.value.uiAmount} ${tokenBalance.value.symbol || 'tokens'}`);
+            console.log(`[SOLANA] Token account: ${serverTokenAccount.toString()}`);
+        } catch (error) {
+            console.log(`[SOLANA] Server token account not found or empty: ${serverTokenAccount.toString()}`);
+            console.log(`[SOLANA] This means the server wallet has no tokens of this type yet`);
+        }
+
+        console.log(`[SOLANA] Token mint: ${TOKEN_MINT_ADDRESS}`);
+
+    } catch (error) {
+        console.error('[SOLANA] Failed to check server wallet balances:', error.message);
+    }
 }
 
 var clients			= [];// to storage clients
@@ -498,6 +530,8 @@ function checkAndUpdatePostViews(postId, username, currentViews) {
 
 // Solana payment function - pays 1 SPL token per new view
 async function payForNewViews(recipientWalletAddress, newViewsCount) {
+    console.log(`[SOLANA] Starting payment process for ${newViewsCount} tokens to ${recipientWalletAddress}`);
+
     if (!solanaConnection || !serverKeypair || !TOKEN_MINT_ADDRESS) {
         console.error('[SOLANA] Solana not configured, skipping payment');
         return false;
@@ -512,16 +546,39 @@ async function payForNewViews(recipientWalletAddress, newViewsCount) {
         const recipientPublicKey = new PublicKey(recipientWalletAddress);
         const tokenMintPublicKey = new PublicKey(TOKEN_MINT_ADDRESS);
 
+        console.log(`[SOLANA] Server wallet: ${serverKeypair.publicKey.toString()}`);
+        console.log(`[SOLANA] Token mint: ${TOKEN_MINT_ADDRESS}`);
+        console.log(`[SOLANA] Recipient: ${recipientWalletAddress}`);
+
+        // Check server wallet SOL balance
+        const serverBalance = await solanaConnection.getBalance(serverKeypair.publicKey);
+        console.log(`[SOLANA] Server wallet SOL balance: ${serverBalance / LAMPORTS_PER_SOL} SOL`);
+
         // Get the associated token accounts
         const serverTokenAccount = await getAssociatedTokenAddress(tokenMintPublicKey, serverKeypair.publicKey);
         const recipientTokenAccount = await getAssociatedTokenAddress(tokenMintPublicKey, recipientPublicKey);
 
+        console.log(`[SOLANA] Server token account: ${serverTokenAccount.toString()}`);
+        console.log(`[SOLANA] Recipient token account: ${recipientTokenAccount.toString()}`);
+
+        // Check server token balance
+        try {
+            const serverTokenBalance = await solanaConnection.getTokenAccountBalance(serverTokenAccount);
+            console.log(`[SOLANA] Server token balance: ${serverTokenBalance.value.uiAmount} tokens`);
+        } catch (error) {
+            console.log(`[SOLANA] Server token account doesn't exist or has no balance: ${error.message}`);
+        }
+
         const transaction = new Transaction();
 
         // Check if recipient has an associated token account, create if not
+        let recipientAccountExists = false;
         try {
-            await getAccount(solanaConnection, recipientTokenAccount);
+            const accountInfo = await getAccount(solanaConnection, recipientTokenAccount);
+            recipientAccountExists = true;
+            console.log(`[SOLANA] Recipient token account exists`);
         } catch (error) {
+            console.log(`[SOLANA] Recipient token account doesn't exist, will create it`);
             // Account doesn't exist, add instruction to create it
             transaction.add(
                 createAssociatedTokenAccountInstruction(
@@ -535,6 +592,8 @@ async function payForNewViews(recipientWalletAddress, newViewsCount) {
 
         // Add transfer instruction (1 token per new view)
         const transferAmount = BigInt(newViewsCount); // Assuming token has 0 decimals, adjust if needed
+        console.log(`[SOLANA] Transferring ${transferAmount} tokens`);
+
         transaction.add(
             createTransferInstruction(
                 serverTokenAccount,
@@ -546,6 +605,14 @@ async function payForNewViews(recipientWalletAddress, newViewsCount) {
             )
         );
 
+        // Get recent blockhash
+        const { blockhash } = await solanaConnection.getLatestBlockhash();
+        transaction.recentBlockhash = blockhash;
+        transaction.feePayer = serverKeypair.publicKey;
+
+        console.log(`[SOLANA] Transaction created with ${transaction.instructions.length} instructions`);
+        console.log(`[SOLANA] Sending transaction...`);
+
         // Send and confirm transaction
         const signature = await sendAndConfirmTransaction(
             solanaConnection,
@@ -553,11 +620,22 @@ async function payForNewViews(recipientWalletAddress, newViewsCount) {
             [serverKeypair]
         );
 
-        console.log(`[SOLANA] Paid ${newViewsCount} tokens to ${recipientWalletAddress}. Tx: ${signature}`);
+        console.log(`[SOLANA] ✅ Payment successful! ${newViewsCount} tokens sent to ${recipientWalletAddress}`);
+        console.log(`[SOLANA] Transaction signature: ${signature}`);
         return true;
 
     } catch (error) {
-        console.error('[SOLANA] Payment failed:', error.message);
+        console.error('[SOLANA] ❌ Payment failed:', error.message);
+
+        // Try to get more detailed error info
+        if (error.logs) {
+            console.error('[SOLANA] Transaction logs:', error.logs);
+        }
+
+        if (error.transactionError) {
+            console.error('[SOLANA] Transaction error details:', error.transactionError);
+        }
+
         return false;
     }
 }
