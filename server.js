@@ -610,9 +610,12 @@ async function payForNewViews(recipientWalletAddress, newViewsCount) {
             );
         }
 
-        // Add transfer instruction (1 token per new view)
-        const transferAmount = BigInt(newViewsCount); // Assuming token has 0 decimals, adjust if needed
-        console.log(`[SOLANA] Transferring ${transferAmount} tokens`);
+        // Get token decimals and calculate proper transfer amount
+        const tokenMintInfo = await solanaConnection.getTokenSupply(tokenMintPublicKey);
+        const decimals = tokenMintInfo.value.decimals;
+        const transferAmount = BigInt(newViewsCount) * BigInt(10 ** decimals); // Convert to smallest unit
+        console.log(`[SOLANA] Token has ${decimals} decimals`);
+        console.log(`[SOLANA] Transferring ${newViewsCount} tokens = ${transferAmount} base units`);
 
         transaction.add(
             createTransferInstruction(
