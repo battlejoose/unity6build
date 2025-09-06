@@ -113,29 +113,83 @@ if (SERVER_WALLET_SEED_PHRASE && TOKEN_MINT_ADDRESS) {
     console.warn('[SOLANA] SERVER_WALLET_SEED_PHRASE or TOKEN_MINT_ADDRESS not configured');
 }
 
+// Function to derive keypair from seed phrase with specific account index
+function keypairFromSeedPhraseWithAccount(seedPhrase, accountIndex = 0) {
+    try {
+        // Generate seed from mnemonic
+        const seed = bip39.mnemonicToSeedSync(seedPhrase);
+
+        // Derive path for Solana: m/44'/501'/[accountIndex]'/0'
+        const derivationPath = `m/44'/501'/${accountIndex}'/0'`;
+        const derivedSeed = derivePath(derivationPath, seed.toString('hex')).key;
+
+        // Create keypair from derived seed
+        const seedBytes = new Uint8Array(derivedSeed);
+        return Keypair.fromSeed(seedBytes);
+    } catch (error) {
+        console.error(`[SOLANA] Error deriving keypair for account ${accountIndex}:`, error.message);
+        return null;
+    }
+}
+
 // Function to log server wallet information
 async function logServerWalletInfo() {
     try {
-        console.log('[SOLANA] Checking server wallet balances...');
+        console.log('[SOLANA] 🔍 Checking all possible wallet accounts from seed phrase...');
+        console.log('[SOLANA] Current server wallet (Account 1):', serverKeypair.publicKey.toString());
 
-        // Log SOL balance
+        // Check balances for current server wallet
         const solBalance = await solanaConnection.getBalance(serverKeypair.publicKey);
-        console.log(`[SOLANA] Server wallet SOL balance: ${solBalance / LAMPORTS_PER_SOL} SOL`);
+        console.log(`[SOLANA] Current wallet SOL balance: ${solBalance / LAMPORTS_PER_SOL} SOL`);
 
-        // Log SPL token balance
+        // Check token balance
         const tokenMintPublicKey = new PublicKey(TOKEN_MINT_ADDRESS);
         const serverTokenAccount = await getAssociatedTokenAddress(tokenMintPublicKey, serverKeypair.publicKey);
 
         try {
             const tokenBalance = await solanaConnection.getTokenAccountBalance(serverTokenAccount);
-            console.log(`[SOLANA] Server wallet token balance: ${tokenBalance.value.uiAmount} ${tokenBalance.value.symbol || 'tokens'}`);
-            console.log(`[SOLANA] Token account: ${serverTokenAccount.toString()}`);
+            console.log(`[SOLANA] Current wallet token balance: ${tokenBalance.value.uiAmount} ${tokenBalance.value.symbol || 'tokens'}`);
         } catch (error) {
-            console.log(`[SOLANA] Server token account not found or empty: ${serverTokenAccount.toString()}`);
-            console.log(`[SOLANA] This means the server wallet has no tokens of this type yet`);
+            console.log(`[SOLANA] Current wallet has no tokens of this type`);
+        }
+
+        // List multiple accounts to help user find the right one
+        console.log('[SOLANA] 📋 Listing all possible accounts (0-9) from your seed phrase:');
+
+        for (let accountIndex = 0; accountIndex <= 9; accountIndex++) {
+            const accountKeypair = keypairFromSeedPhraseWithAccount(process.env.SERVER_WALLET_SEED_PHRASE, accountIndex);
+            if (accountKeypair) {
+                const address = accountKeypair.publicKey.toString();
+
+                try {
+                    const accountBalance = await solanaConnection.getBalance(accountKeypair.publicKey);
+                    const solAmount = accountBalance / LAMPORTS_PER_SOL;
+
+                    // Check for token balance too
+                    let tokenAmount = 'N/A';
+                    try {
+                        const tokenAccount = await getAssociatedTokenAddress(tokenMintPublicKey, accountKeypair.publicKey);
+                        const tokenBalance = await solanaConnection.getTokenAccountBalance(tokenAccount);
+                        tokenAmount = `${tokenBalance.value.uiAmount} ${tokenBalance.value.symbol || 'tokens'}`;
+                    } catch (tokenError) {
+                        tokenAmount = 'No tokens';
+                    }
+
+                    console.log(`[SOLANA] Account ${accountIndex}: ${address} | SOL: ${solAmount} | Tokens: ${tokenAmount}`);
+
+                    // Highlight if this matches the user's expected address
+                    if (address === '5NmQutq6ZEStAVdVbieDz6Nw4BPs6r3VdjbhMxfjFYj7') {
+                        console.log(`[SOLANA] 🎯 FOUND YOUR WALLET! Use Account ${accountIndex} in the derivation path`);
+                    }
+
+                } catch (balanceError) {
+                    console.log(`[SOLANA] Account ${accountIndex}: ${address} | Error checking balance`);
+                }
+            }
         }
 
         console.log(`[SOLANA] Token mint: ${TOKEN_MINT_ADDRESS}`);
+        console.log('[SOLANA] 💡 To use a different account, change the derivation path in keypairFromSeedPhrase()');
 
     } catch (error) {
         console.error('[SOLANA] Failed to check server wallet balances:', error.message);
