@@ -282,3 +282,15 @@ paket-files/
 # JetBrains Rider
 .idea/
 *.sln.iml
+
+# Unity WebGL Build outputs (should not be in repo)
+public/Build/
+public/TemplateData/
+public/MonoBleedingEdge/
+public/WebGLMultiplayerKit*_BurstDebugInformation_DoNotShip/
+*.data
+*.wasm
+*.framework.js
+*.loader.js
+UnityPlayer.dll
+UnityCrashHandler*.exe
