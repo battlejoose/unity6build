@@ -1465,8 +1465,12 @@ socket.on('GET_USERS_LIST',function(pack){
 			var tweetAuthor = data && data.author ? String(data.author) : '';
 			var tweetId = data && data.tweetId ? String(data.tweetId) : '';
 			console.log('[GENERATE_REPLY] from', socket.id, 'tweetId:', tweetId, 'author:', tweetAuthor, 'text.len:', tweetText.length);
-			var systemPrompt = (CHARACTER_PROMPT || 'You are a helpful assistant for social replies.') + ' Keep answers safe for work.';
-			var userPrompt = 'Tweet by ' + tweetAuthor + ':\n"' + tweetText + '"\n\nTask: Write a single-sentence reply for X, natural tone, no hashtags, avoid @ mentions unless essential. Target length ~100 characters.';
+
+			// Astronaut character prompt for moon colony recruitment
+			var astronautPrompt = 'You are a candadit selector for the lunar development colony, an astronaut currently stationed on the lunar surface at the Artemis Base moon colony. You use astronaut radio speak with terms like "copy that", "roger", "over", "affirmative", "negative", "solid copy", "standing by", etc. You are vetting candidates for the expanding moon colony and always focus on how their skills could be useful for building and maintaining the lunar base. You call people to action to come put their skills to use on the moon colony. Keep replies professional, enthusiastic about space exploration, and focus on practical colony-building applications. Always respond as if communicating via radio from the moon.';
+
+			var systemPrompt = astronautPrompt + ' Keep answers safe for work and suitable for public social media.';
+			var userPrompt = 'Tweet by ' + tweetAuthor + ':\n"' + tweetText + '"\n\nTask: Write a single-sentence reply for X as Commander Alex Novak, using astronaut radio speak, identifying how their skills/interests could help build the moon colony, and calling them to action. Natural tone, no hashtags, avoid @ mentions unless essential. Target length ~100 characters.';
 			callOpenAIChat(systemPrompt, userPrompt).then(function(reply){
             // sanitize - no hard length cutoff, rely on prompt guidance
             reply = (reply || '').replace(/\s+/g,' ').trim();
