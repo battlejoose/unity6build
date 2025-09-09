@@ -159,46 +159,15 @@ try {
 }
 
 // Load usernames for search
+const USERNAMES_FILE = path.join(__dirname, 'usernames.json');
 let SEARCH_USERNAMES = [];
-let USERNAMES_FILE = null;
-
-// Try multiple possible locations for the usernames file
-const possiblePaths = [
-    path.join(__dirname, '../mmo6template/usernames.json'),
-    path.join(__dirname, 'usernames.json'),
-    path.join(__dirname, '../usernames.json'),
-    path.join(process.cwd(), 'usernames.json')
-];
-
-console.log('[USERNAMES] Current directory:', __dirname);
-console.log('[USERNAMES] Working directory:', process.cwd());
-
-for (const testPath of possiblePaths) {
-    console.log('[USERNAMES] Checking path:', testPath);
-    if (fs.existsSync(testPath)) {
-        USERNAMES_FILE = testPath;
-        console.log('[USERNAMES] Found usernames file at:', testPath);
-        break;
+try {
+    if (fs.existsSync(USERNAMES_FILE)) {
+        SEARCH_USERNAMES = JSON.parse(fs.readFileSync(USERNAMES_FILE, 'utf8'));
+        console.log('[USERNAMES] Loaded ' + SEARCH_USERNAMES.length + ' usernames for search');
     }
-}
-
-if (USERNAMES_FILE) {
-    try {
-        const fileContent = fs.readFileSync(USERNAMES_FILE, 'utf8');
-        console.log('[USERNAMES] File content length:', fileContent.length);
-        SEARCH_USERNAMES = JSON.parse(fileContent);
-        console.log('[USERNAMES] Successfully loaded ' + SEARCH_USERNAMES.length + ' usernames for search');
-        if (SEARCH_USERNAMES.length > 0) {
-            console.log('[USERNAMES] First few usernames:', SEARCH_USERNAMES.slice(0, 3).join(', '));
-        }
-    } catch (e) {
-        console.error('[USERNAMES] Error parsing usernames file:', e.message);
-        SEARCH_USERNAMES = [];
-    }
-} else {
-    console.error('[USERNAMES] Could not find usernames.json in any of the expected locations');
-    console.log('[USERNAMES] Please ensure usernames.json exists in one of these locations:');
-    possiblePaths.forEach(p => console.log('  -', p));
+} catch (e) {
+    console.error('[USERNAMES] Error loading usernames:', e.message);
     SEARCH_USERNAMES = [];
 }
 
