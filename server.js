@@ -1468,14 +1468,8 @@ socket.on('GET_USERS_LIST',function(pack){
 			var systemPrompt = (CHARACTER_PROMPT || 'You are a helpful assistant for social replies.') + ' Keep answers safe for work.';
 			var userPrompt = 'Tweet by ' + tweetAuthor + ':\n"' + tweetText + '"\n\nTask: Write a single-sentence reply for X, natural tone, no hashtags, avoid @ mentions unless essential. Target length ~100 characters.';
 			callOpenAIChat(systemPrompt, userPrompt).then(function(reply){
-				// sanitize and length-tune
-				reply = (reply || '').replace(/\s+/g,' ').trim();
-				if (reply.length > 100) {
-					var cut = reply.substring(0, 100);
-					var lastSpace = cut.lastIndexOf(' ');
-					if (lastSpace > 60) cut = cut.substring(0, lastSpace);
-					reply = cut.trim();
-				}
+            // sanitize - no hard length cutoff, rely on prompt guidance
+            reply = (reply || '').replace(/\s+/g,' ').trim();
 				if (!reply || reply.length === 0) {
 					reply = buildFallbackReply(tweetAuthor, tweetText);
 				}
