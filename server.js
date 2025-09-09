@@ -158,6 +158,19 @@ try {
     CHARACTER_PROMPT = '';
 }
 
+// Load usernames for search
+const USERNAMES_FILE = path.join(__dirname, 'usernames.json');
+let SEARCH_USERNAMES = [];
+try {
+    if (fs.existsSync(USERNAMES_FILE)) {
+        SEARCH_USERNAMES = JSON.parse(fs.readFileSync(USERNAMES_FILE, 'utf8'));
+        console.log('[USERNAMES] Loaded ' + SEARCH_USERNAMES.length + ' usernames for search');
+    }
+} catch (e) {
+    console.error('[USERNAMES] Error loading usernames:', e.message);
+    SEARCH_USERNAMES = [];
+}
+
 function callOpenAIChat(systemPrompt, userPrompt) {
     return new Promise(function(resolve, reject) {
         if (!OPENAI_API_KEY) {
@@ -292,6 +305,15 @@ function buildXQueryFromKeywords(input) {
 		.map(function(s) { return s.trim(); })
 		.filter(function(s) { return s.length > 0; })
 		.map(function(k) { return k.indexOf(' ') >= 0 ? '"' + k + '"' : k; })
+		.join(' OR ');
+	if (!core) return '';
+	return '(' + core + ') -is:retweet -is:reply';
+}
+
+function buildXQueryFromUsernames() {
+	if (!SEARCH_USERNAMES || SEARCH_USERNAMES.length === 0) return '';
+	var core = SEARCH_USERNAMES
+		.map(function(username) { return 'from:' + username; })
 		.join(' OR ');
 	if (!core) return '';
 	return '(' + core + ') -is:retweet -is:reply';
@@ -1217,21 +1239,23 @@ socket.on('GET_USERS_LIST',function(pack){
        }
 	});//END_SOCKET_ON
 
-	// X search: receive keywords and reply only to requester with results
+	// X search: use hardcoded usernames and reply only to requester with results
 	socket.on('X_SEARCH', function (_data)
 	{
 		try {
 			var data = JSON.parse(_data);
-			var keywords = data.keywords || '';
 			var nextToken = data.next_token || null;
-			var query = buildXQueryFromKeywords(keywords);
+			var query = buildXQueryFromUsernames();
 			if (!query) {
-				socket.emit('X_SEARCH_RESULTS', { tweets: [], next_token: null });
+				console.log('[X_SEARCH] No usernames available for search');
+				socket.emit('X_SEARCH_RESULTS', { tweets: [], next_token: null, error: 'no_usernames' });
 				return;
 			}
+			console.log('[X_SEARCH] Searching with query:', query);
 			fetchXRecent(query, nextToken).then(function(apiRes){
 				var flattened = flattenXResponse(apiRes).slice(0, 20);
 				var next = apiRes && apiRes.meta && apiRes.meta.next_token ? apiRes.meta.next_token : null;
+				console.log('[X_SEARCH] Found ' + flattened.length + ' tweets');
 				socket.emit('X_SEARCH_RESULTS', { tweets: flattened, next_token: next });
 			}).catch(function(err){
 				console.error('[X_SEARCH] error:', err && err.message ? err.message : err);
