@@ -361,7 +361,7 @@ function buildXQueryFromUsernames() {
 		.map(function(username) { return 'from:' + username; })
 		.join(' OR ');
 	if (!core) return '';
-	return '(' + core + ') -is:retweet -is:reply';
+	return '(' + core + ')'; // Removed -is:retweet -is:reply to allow all posts
 }
 
 function fetchXRecent(query, nextToken, maxResults) {
