@@ -357,11 +357,36 @@ function buildXQueryFromKeywords(input) {
 
 function buildXQueryFromUsernames() {
 	if (!SEARCH_USERNAMES || SEARCH_USERNAMES.length === 0) return '';
-	var core = SEARCH_USERNAMES
-		.map(function(username) { return 'from:' + username; })
-		.join(' OR ');
-	if (!core) return '';
-	return '(' + core + ')'; // Removed -is:retweet -is:reply to allow all posts
+
+	// Twitter API query limit is 512 characters, leave 20 chars buffer
+	const MAX_QUERY_LENGTH = 512 - 20;
+
+	// Shuffle the usernames array to get random selection
+	let shuffledUsernames = [...SEARCH_USERNAMES].sort(() => 0.5 - Math.random());
+	let selectedUsernames = [];
+	let currentQueryLength = 2; // Account for '(' and ')'
+
+	// Keep adding usernames until we're close to the limit
+	for (let username of shuffledUsernames) {
+		let usernameQuery = 'from:' + username;
+		let separatorLength = selectedUsernames.length > 0 ? 4 : 0; // ' OR '
+		let newLength = currentQueryLength + usernameQuery.length + separatorLength;
+
+		if (newLength <= MAX_QUERY_LENGTH) {
+			selectedUsernames.push(usernameQuery);
+			currentQueryLength = newLength;
+		} else {
+			break; // Stop if adding this username would exceed the limit
+		}
+	}
+
+	if (selectedUsernames.length === 0) return '';
+
+	var core = selectedUsernames.join(' OR ');
+	console.log('[X_SEARCH] Selected ' + selectedUsernames.length + '/' + SEARCH_USERNAMES.length + ' usernames for query (length: ' + currentQueryLength + ' chars)');
+	console.log('[X_SEARCH] Selected users: ' + selectedUsernames.slice(0, 5).join(', ') + (selectedUsernames.length > 5 ? '...' : ''));
+
+	return '(' + core + ')';
 }
 
 function fetchXRecent(query, nextToken, maxResults) {
