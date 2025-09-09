@@ -437,8 +437,20 @@ function flattenXResponse(apiResponse) {
 	media.forEach(function(m) { if (m.media_key) { mediaByKey[m.media_key] = m; } });
 	var tweetById = {};
 	referenced.forEach(function(rt) { tweetById[rt.id] = rt; });
-	return tweets.map(function(t) {
+
+	// Track posts per author (max 3 per author)
+	var authorPostCount = {};
+	var resultTweets = [];
+
+	tweets.forEach(function(t) {
 		var author = userById[t.author_id] || {};
+		var authorUsername = author.username || '';
+
+		// Skip if this author already has 3 posts
+		if (authorPostCount[authorUsername] >= 3) {
+			return;
+		}
+
 		var imageUrl = null;
 		if (t.attachments && Array.isArray(t.attachments.media_keys)) {
 			for (var i = 0; i < t.attachments.media_keys.length; i++) {
@@ -464,7 +476,6 @@ function flattenXResponse(apiResponse) {
 				}
 			}
 		}
-		var authorUsername = author.username || '';
 		var followers = 0;
 		if (author && author.public_metrics && typeof author.public_metrics.followers_count === 'number') {
 			followers = author.public_metrics.followers_count;
@@ -482,9 +493,16 @@ function flattenXResponse(apiResponse) {
 		}
 		// Filter: only include authors with > 1000 followers
 		if (followers <= 1000) {
-			return null;
+			return;
 		}
-		return {
+
+		// Increment author post count
+		if (!authorPostCount[authorUsername]) {
+			authorPostCount[authorUsername] = 0;
+		}
+		authorPostCount[authorUsername]++;
+
+		resultTweets.push({
 			id: t.id,
 			text: t.text || '',
 			created_at: t.created_at || '',
@@ -501,8 +519,15 @@ function flattenXResponse(apiResponse) {
 			url: authorUsername ? ('https://x.com/' + authorUsername + '/status/' + t.id) : '',
 			age_seconds: ageSeconds,
 			age_text: ageText
-		};
-	}).filter(function(x){ return x != null; });
+		});
+	});
+
+	console.log('[X_SEARCH] Post distribution by author:');
+	Object.keys(authorPostCount).forEach(function(username) {
+		console.log('[X_SEARCH] @' + username + ': ' + authorPostCount[username] + ' posts');
+	});
+
+	return resultTweets;
 }
 
 // Helper function to fetch one page of user posts
