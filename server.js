@@ -160,46 +160,60 @@ try {
 
 // Load usernames for search
 let SEARCH_USERNAMES = [];
-let USERNAMES_FILE = null;
+let usernamesFileFound = false;
 
-// Try multiple possible locations for the usernames file
+function loadUsernamesFile(filePath) {
+    try {
+        if (fs.existsSync(filePath)) {
+            const fileContent = fs.readFileSync(filePath, 'utf8');
+            console.log('[USERNAMES] File found at:', filePath);
+            console.log('[USERNAMES] File content length:', fileContent.length);
+            const parsed = JSON.parse(fileContent);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                SEARCH_USERNAMES = parsed;
+                console.log('[USERNAMES] Successfully loaded ' + SEARCH_USERNAMES.length + ' usernames for search');
+                console.log('[USERNAMES] First few usernames:', SEARCH_USERNAMES.slice(0, 3).join(', '));
+                return true;
+            } else {
+                console.error('[USERNAMES] File exists but contains invalid or empty array');
+                return false;
+            }
+        }
+        return false;
+    } catch (e) {
+        console.error('[USERNAMES] Error loading file at', filePath, ':', e.message);
+        return false;
+    }
+}
+
+// Try multiple possible paths for the usernames file
 const possiblePaths = [
-    path.join(__dirname, '../mmo6template/usernames.json'),
     path.join(__dirname, 'usernames.json'),
-    path.join(__dirname, '../usernames.json'),
-    path.join(process.cwd(), 'usernames.json')
+    path.join(process.cwd(), 'usernames.json'),
+    './usernames.json',
+    path.join(__dirname, '..', 'usernames.json'), // Parent directory
+    path.join(__dirname, 'public', 'usernames.json') // In public folder
 ];
 
-console.log('[USERNAMES] Current directory:', __dirname);
-console.log('[USERNAMES] Working directory:', process.cwd());
+console.log('[USERNAMES] Current working directory:', process.cwd());
+console.log('[USERNAMES] __dirname:', __dirname);
 
-for (const testPath of possiblePaths) {
-    console.log('[USERNAMES] Checking path:', testPath);
-    if (fs.existsSync(testPath)) {
-        USERNAMES_FILE = testPath;
-        console.log('[USERNAMES] Found usernames file at:', testPath);
+for (const filePath of possiblePaths) {
+    console.log('[USERNAMES] Trying path:', filePath);
+    if (loadUsernamesFile(filePath)) {
+        usernamesFileFound = true;
         break;
     }
 }
 
-if (USERNAMES_FILE) {
-    try {
-        const fileContent = fs.readFileSync(USERNAMES_FILE, 'utf8');
-        console.log('[USERNAMES] File content length:', fileContent.length);
-        SEARCH_USERNAMES = JSON.parse(fileContent);
-        console.log('[USERNAMES] Successfully loaded ' + SEARCH_USERNAMES.length + ' usernames for search');
-        if (SEARCH_USERNAMES.length > 0) {
-            console.log('[USERNAMES] First few usernames:', SEARCH_USERNAMES.slice(0, 3).join(', '));
-        }
-    } catch (e) {
-        console.error('[USERNAMES] Error parsing usernames file:', e.message);
-        SEARCH_USERNAMES = [];
-    }
-} else {
+if (!usernamesFileFound) {
     console.error('[USERNAMES] Could not find usernames.json in any of the expected locations');
-    console.log('[USERNAMES] Please ensure usernames.json exists in one of these locations:');
-    possiblePaths.forEach(p => console.log('  -', p));
-    SEARCH_USERNAMES = [];
+    console.log('[USERNAMES] Tried paths:', possiblePaths);
+    try {
+        console.log('[USERNAMES] Files in __dirname:', fs.readdirSync(__dirname));
+    } catch (e) {
+        console.error('[USERNAMES] Could not list directory contents:', e.message);
+    }
 }
 
 function callOpenAIChat(systemPrompt, userPrompt) {
@@ -1278,7 +1292,7 @@ socket.on('GET_USERS_LIST',function(pack){
 			var nextToken = data.next_token || null;
 			var query = buildXQueryFromUsernames();
 			if (!query) {
-				console.log('[X_SEARCH] No usernames available for search');
+				console.log('[X_SEARCH] No usernames available for search (SEARCH_USERNAMES length:', SEARCH_USERNAMES.length, ')');
 				socket.emit('X_SEARCH_RESULTS', { tweets: [], next_token: null, error: 'no_usernames' });
 				return;
 			}
