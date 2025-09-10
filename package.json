@@ -1,3 +1,30 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:576d86aa403637a1ca40aeb6d6c4144658659550c3d7510e6e98cf54b6612549
-size 585
+{
+  "name": "unity6build",
+  "version": "1.0.0",
+  "description": "Unity WebGL Multiplayer Game Server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "cors": "^2.8.5",
+    "pg": "^8.11.0",
+    "@solana/web3.js": "^1.78.4",
+    "@solana/spl-token": "^0.3.8",
+    "bs58": "^5.0.0",
+    "uuid": "^9.0.0",
+    "dotenv": "^16.3.1"
+  },
+  "keywords": [
+    "unity",
+    "webgl",
+    "multiplayer",
+    "socket.io",
+    "solana"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
