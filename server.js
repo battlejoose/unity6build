@@ -140,9 +140,9 @@ var vehicleLookup = {};
 // Track tweets that have already been raided to avoid duplicates
 var raidedTweetIds = {};
 
-// Store the 20 most recent posts for new players
+// Store the 100 most recent posts for new players
 var recentPosts = [];
-const MAX_RECENT_POSTS = 20;
+const MAX_RECENT_POSTS = 100;
 
 // X Search cooldown tracking (3 minutes = 180 seconds) - Global cooldown
 const X_SEARCH_COOLDOWN_MS = 60 * 1000 * 1;
@@ -522,6 +522,13 @@ function buildXQueryFromUsernames() {
 // Function to update recent posts storage
 function updateRecentPosts(newPosts) {
     if (!newPosts || !Array.isArray(newPosts)) return;
+
+    // Initialize replyCount for new posts
+    newPosts.forEach(post => {
+        if (post && !post.hasOwnProperty('replyCount')) {
+            post.replyCount = 0;
+        }
+    });
 
     // Add new posts to the beginning of the array
     recentPosts.unshift(...newPosts);
@@ -1822,6 +1829,14 @@ socket.on('GET_USERS_LIST',function(pack){
 				if (!reply || reply.length === 0) {
 					reply = buildFallbackReply(tweetAuthor, tweetText);
 				}
+
+				// Increment reply count for this tweet
+				const post = recentPosts.find(p => p.id === tweetId);
+				if (post) {
+					post.replyCount = (post.replyCount || 0) + 1;
+					console.log('[GENERATE_REPLY] Incremented reply count for tweet', tweetId, 'to', post.replyCount);
+				}
+
 				console.log('[GENERATE_REPLY] success for tweetId:', tweetId, 'reply.len:', reply ? reply.length : 0, 'reply:', reply);
 				socket.emit('GENERATE_REPLY_RESULT', { ok:true, reply: reply, tweetId: tweetId });
 			}).catch(function(err){
