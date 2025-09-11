@@ -414,8 +414,8 @@ function buildXQueryFromUsernames() {
     // Initialize rotation system if not already done
     initializeUsernameRotation();
 
-    // Twitter API query limit is 512 characters, leave 20 chars buffer
-    const MAX_QUERY_LENGTH = 512 - 20;
+	// Twitter API query limit is 512 characters, leave 20 chars buffer
+	const MAX_QUERY_LENGTH = 512 - 20;
 
     // Dynamic parameters based on total usernames
     const dynamicHistorySize = Math.max(5, Math.floor(SEARCH_USERNAMES.length * 0.3));
@@ -450,8 +450,8 @@ function buildXQueryFromUsernames() {
         }
     }
 
-    let selectedUsernames = [];
-    let currentQueryLength = 2; // Account for '(' and ')'
+	let selectedUsernames = [];
+	let currentQueryLength = 2; // Account for '(' and ')'
 
     // Select usernames from the available pool, respecting query length limit
     const maxIterations = usernameRotationState.availableUsernames.length;
@@ -471,12 +471,12 @@ function buildXQueryFromUsernames() {
         const separatorLength = selectedUsernames.length > 0 ? 4 : 0; // ' OR '
         const newLength = currentQueryLength + usernameQuery.length + separatorLength;
 
-        if (newLength <= MAX_QUERY_LENGTH) {
+		if (newLength <= MAX_QUERY_LENGTH) {
             selectedUsernames.push(username);
             // Remove from available pool (will be added to used list)
             usernameRotationState.availableUsernames.splice(i, 1);
             i--; // Adjust index after removal
-            currentQueryLength = newLength;
+			currentQueryLength = newLength;
         }
 
         // Stop if we have enough usernames or hit the length limit
@@ -516,7 +516,7 @@ function buildXQueryFromUsernames() {
     console.log('[X_SEARCH] Selected users: ' + selectedUsernames.slice(0, 5).join(', ') +
                 (selectedUsernames.length > 5 ? '...' : ''));
 
-    return '(' + core + ')';
+	return '(' + core + ')';
 }
 
 // Function to update recent posts storage
