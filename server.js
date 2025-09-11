@@ -1835,12 +1835,15 @@ socket.on('GET_USERS_LIST',function(pack){
 				if (post) {
 					post.replyCount = (post.replyCount || 0) + 1;
 					console.log('[GENERATE_REPLY] Incremented reply count for tweet', tweetId, 'to', post.replyCount);
+					console.log('[GENERATE_REPLY] Broadcasting UPDATE_REPLY_COUNT to all clients');
 
 					// Broadcast the updated count to all connected clients
 					io.emit('UPDATE_REPLY_COUNT', {
 						tweetId: tweetId,
 						newCount: post.replyCount
 					});
+				} else {
+					console.log('[GENERATE_REPLY] Post not found in recentPosts for tweetId:', tweetId);
 				}
 
 				console.log('[GENERATE_REPLY] success for tweetId:', tweetId, 'reply.len:', reply ? reply.length : 0, 'reply:', reply);
