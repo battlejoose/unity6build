@@ -353,6 +353,37 @@ window.addEventListener('load', function() {
 		} catch(e) {}
 	});
 
+	// Leaderboard data handlers
+	socket.on('LEADERBOARD_HOURLY_DATA', function(payload) {
+		try {
+			var json = JSON.stringify(payload || {});
+			console.log('[LEADERBOARD] Received hourly leaderboard data:', json);
+			if(window.unityInstance!=null) {
+				window.unityInstance.SendMessage('NetworkManager', 'OnReceiveLeaderboardHourly', json);
+			}
+		} catch(e) { console.error('[LEADERBOARD] Error forwarding hourly data:', e); }
+	});
+
+	socket.on('LEADERBOARD_DAILY_DATA', function(payload) {
+		try {
+			var json = JSON.stringify(payload || {});
+			console.log('[LEADERBOARD] Received daily leaderboard data:', json);
+			if(window.unityInstance!=null) {
+				window.unityInstance.SendMessage('NetworkManager', 'OnReceiveLeaderboardDaily', json);
+			}
+		} catch(e) { console.error('[LEADERBOARD] Error forwarding daily data:', e); }
+	});
+
+	socket.on('LEADERBOARD_WEEKLY_DATA', function(payload) {
+		try {
+			var json = JSON.stringify(payload || {});
+			console.log('[LEADERBOARD] Received weekly leaderboard data:', json);
+			if(window.unityInstance!=null) {
+				window.unityInstance.SendMessage('NetworkManager', 'OnReceiveLeaderboardWeekly', json);
+			}
+		} catch(e) { console.error('[LEADERBOARD] Error forwarding weekly data:', e); }
+	});
+
 	// X OAuth: success with username
 	socket.on('X_AUTH_SUCCESS', function(payload) {
 		try {

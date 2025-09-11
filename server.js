@@ -46,6 +46,34 @@ pool.query(`
     )
 `).catch(err => console.error('[DB] Error creating table:', err));
 
+// Create leaderboard tables if they don't exist
+pool.query(`
+    CREATE TABLE IF NOT EXISTS leaderboard_hourly (
+        username TEXT PRIMARY KEY,
+        total_views INTEGER NOT NULL DEFAULT 0,
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        period_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+`).catch(err => console.error('[DB] Error creating leaderboard_hourly table:', err));
+
+pool.query(`
+    CREATE TABLE IF NOT EXISTS leaderboard_daily (
+        username TEXT PRIMARY KEY,
+        total_views INTEGER NOT NULL DEFAULT 0,
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        period_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+`).catch(err => console.error('[DB] Error creating leaderboard_daily table:', err));
+
+pool.query(`
+    CREATE TABLE IF NOT EXISTS leaderboard_weekly (
+        username TEXT PRIMARY KEY,
+        total_views INTEGER NOT NULL DEFAULT 0,
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        period_start TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+`).catch(err => console.error('[DB] Error creating leaderboard_weekly table:', err));
+
 // Solana configuration
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 const SERVER_WALLET_PRIVATE_KEY = process.env.SERVER_WALLET_PRIVATE_KEY;
@@ -942,6 +970,113 @@ function checkAndUpdatePostViews(postId, username, currentViews) {
 	});
 }
 
+// ===== LEADERBOARD FUNCTIONS =====
+
+// Update leaderboard for a specific period
+async function updateLeaderboard(username, newViews, period) {
+    try {
+        const tableName = `leaderboard_${period}`;
+        const now = new Date();
+
+        console.log(`[LEADERBOARD] Updating ${period} leaderboard for @${username}: +${newViews} views`);
+
+        // First, check if user already has an entry for current period
+        const existingQuery = `SELECT * FROM ${tableName} WHERE username = $1`;
+        const existingResult = await pool.query(existingQuery, [username]);
+
+        if (existingResult.rows.length > 0) {
+            const existingEntry = existingResult.rows[0];
+            const periodStart = new Date(existingEntry.period_start);
+
+            // Check if we need to reset for new period
+            let shouldReset = false;
+            if (period === 'hourly' && (now - periodStart) >= 60 * 60 * 1000) { // 1 hour
+                shouldReset = true;
+            } else if (period === 'daily' && (now - periodStart) >= 24 * 60 * 60 * 1000) { // 24 hours
+                shouldReset = true;
+            } else if (period === 'weekly' && (now - periodStart) >= 7 * 24 * 60 * 60 * 1000) { // 7 days
+                shouldReset = true;
+            }
+
+            if (shouldReset) {
+                // Reset for new period
+                await pool.query(`UPDATE ${tableName} SET total_views = $1, period_start = $2, last_updated = $3 WHERE username = $4`,
+                    [newViews, now, now, username]);
+                console.log(`[LEADERBOARD] Reset ${period} entry for @${username} to ${newViews} views`);
+            } else {
+                // Add to existing total
+                const newTotal = existingEntry.total_views + newViews;
+                await pool.query(`UPDATE ${tableName} SET total_views = $1, last_updated = $2 WHERE username = $3`,
+                    [newTotal, now, username]);
+                console.log(`[LEADERBOARD] Updated ${period} total for @${username} to ${newTotal} views`);
+            }
+        } else {
+            // Create new entry
+            await pool.query(`INSERT INTO ${tableName} (username, total_views, period_start, last_updated) VALUES ($1, $2, $3, $4)`,
+                [username, newViews, now, now]);
+            console.log(`[LEADERBOARD] Created new ${period} entry for @${username} with ${newViews} views`);
+        }
+    } catch (error) {
+        console.error(`[LEADERBOARD] Error updating ${period} leaderboard for @${username}:`, error.message);
+    }
+}
+
+// Get leaderboard data for a specific period
+async function getLeaderboardData(period, limit = 20) {
+    try {
+        const tableName = `leaderboard_${period}`;
+        const query = `SELECT username, total_views FROM ${tableName} ORDER BY total_views DESC LIMIT $1`;
+        const result = await pool.query(query, [limit]);
+        return result.rows;
+    } catch (error) {
+        console.error(`[LEADERBOARD] Error fetching ${period} leaderboard:`, error.message);
+        return [];
+    }
+}
+
+// Cleanup expired leaderboard entries
+async function cleanupExpiredEntries() {
+    try {
+        const now = new Date();
+
+        // Cleanup hourly entries older than 2 hours
+        const hourlyCutoff = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+        await pool.query('DELETE FROM leaderboard_hourly WHERE period_start < $1', [hourlyCutoff]);
+
+        // Cleanup daily entries older than 2 days
+        const dailyCutoff = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+        await pool.query('DELETE FROM leaderboard_daily WHERE period_start < $1', [dailyCutoff]);
+
+        // Cleanup weekly entries older than 2 weeks
+        const weeklyCutoff = new Date(now.getTime() - 2 * 7 * 24 * 60 * 60 * 1000);
+        await pool.query('DELETE FROM leaderboard_weekly WHERE period_start < $1', [weeklyCutoff]);
+
+        console.log('[LEADERBOARD] Cleaned up expired leaderboard entries');
+    } catch (error) {
+        console.error('[LEADERBOARD] Error cleaning up expired entries:', error.message);
+    }
+}
+
+// Format leaderboard data for client
+function formatLeaderboardForClient(leaderboardData) {
+    return leaderboardData.map((entry, index) => {
+        const views = entry.total_views;
+        let formattedViews;
+
+        if (views >= 1000000) {
+            formattedViews = (views / 1000000).toFixed(1) + 'M';
+        } else if (views >= 1000) {
+            formattedViews = (views / 1000).toFixed(1) + 'k';
+        } else {
+            formattedViews = views.toString();
+        }
+
+        return `${formattedViews}-@${entry.username}`;
+    });
+}
+
+// ===== END LEADERBOARD FUNCTIONS =====
+
 // Solana payment function - pays 1 SPL token per new view
 async function payForNewViews(recipientWalletAddress, newViewsCount) {
     console.log(`[SOLANA] Starting payment process for ${newViewsCount} tokens to ${recipientWalletAddress}`);
@@ -1120,6 +1255,22 @@ function scanUserPosts(username, daysBack, walletAddress, searchTerm) {
 				if (tweetIndex >= allTweets.length) {
 					// All tweets processed
 					console.log('[SCAN_USER_POSTS] Results: ' + clubMoonPosts + '/' + totalPosts + ' qualified posts, ' + newViews + ' NEW views from qualified posts');
+
+					// Update leaderboard with new views
+					if (newViews > 0) {
+						console.log('[SCAN_USER_POSTS] Updating leaderboards for @' + username + ' with ' + newViews + ' new views');
+						const leaderboardPromises = [
+							updateLeaderboard(username, newViews, 'hourly'),
+							updateLeaderboard(username, newViews, 'daily'),
+							updateLeaderboard(username, newViews, 'weekly')
+						];
+
+						Promise.all(leaderboardPromises).then(() => {
+							console.log('[SCAN_USER_POSTS] Leaderboard updates completed');
+						}).catch(err => {
+							console.error('[SCAN_USER_POSTS] Error updating leaderboards:', err.message);
+						});
+					}
 
 					// Process payment for new views using server's wallet
 					if (newViews > 0 && serverKeypair && walletAddress) {
@@ -1745,6 +1896,58 @@ socket.on('GET_USERS_LIST',function(pack){
 		}catch(e){ console.error('[X_AUTH_START] internal_error', e && e.message ? e.message : e); socket.emit('X_AUTH_URL', { ok:false, error:'internal_error' }); }
 	});
 
+	// Get leaderboard data for different periods
+	socket.on('GET_LEADERBOARD_HOURLY', function (_data)
+	{
+		try {
+			console.log('[LEADERBOARD] Requesting hourly leaderboard data');
+			getLeaderboardData('hourly', 20).then(data => {
+				const formattedData = formatLeaderboardForClient(data);
+				socket.emit('LEADERBOARD_HOURLY_DATA', { entries: formattedData });
+				console.log('[LEADERBOARD] Sent hourly leaderboard with ' + formattedData.length + ' entries');
+			}).catch(err => {
+				console.error('[LEADERBOARD] Error fetching hourly data:', err.message);
+				socket.emit('LEADERBOARD_HOURLY_DATA', { entries: [] });
+			});
+		} catch (e) {
+			console.error('[LEADERBOARD] Error in GET_LEADERBOARD_HOURLY:', e.message);
+		}
+	});//END_SOCKET_ON
+
+	socket.on('GET_LEADERBOARD_DAILY', function (_data)
+	{
+		try {
+			console.log('[LEADERBOARD] Requesting daily leaderboard data');
+			getLeaderboardData('daily', 20).then(data => {
+				const formattedData = formatLeaderboardForClient(data);
+				socket.emit('LEADERBOARD_DAILY_DATA', { entries: formattedData });
+				console.log('[LEADERBOARD] Sent daily leaderboard with ' + formattedData.length + ' entries');
+			}).catch(err => {
+				console.error('[LEADERBOARD] Error fetching daily data:', err.message);
+				socket.emit('LEADERBOARD_DAILY_DATA', { entries: [] });
+			});
+		} catch (e) {
+			console.error('[LEADERBOARD] Error in GET_LEADERBOARD_DAILY:', e.message);
+		}
+	});//END_SOCKET_ON
+
+	socket.on('GET_LEADERBOARD_WEEKLY', function (_data)
+	{
+		try {
+			console.log('[LEADERBOARD] Requesting weekly leaderboard data');
+			getLeaderboardData('weekly', 20).then(data => {
+				const formattedData = formatLeaderboardForClient(data);
+				socket.emit('LEADERBOARD_WEEKLY_DATA', { entries: formattedData });
+				console.log('[LEADERBOARD] Sent weekly leaderboard with ' + formattedData.length + ' entries');
+			}).catch(err => {
+				console.error('[LEADERBOARD] Error fetching weekly data:', err.message);
+				socket.emit('LEADERBOARD_WEEKLY_DATA', { entries: [] });
+			});
+		} catch (e) {
+			console.error('[LEADERBOARD] Error in GET_LEADERBOARD_WEEKLY:', e.message);
+		}
+	});//END_SOCKET_ON
+
 	// Raid a selected post: broadcast to all clients
 	socket.on('RAID_POST', function (_data)
 	{
@@ -2151,6 +2354,12 @@ function gameloop() {
 		 
 		 
 }
+
+// Schedule periodic cleanup of expired leaderboard entries (every 15 minutes)
+setInterval(cleanupExpiredEntries, 15 * 60 * 1000);
+
+// Run initial cleanup on startup
+cleanupExpiredEntries();
 
 setInterval(gameloop, 1000);
 // Adicionando a propriedade posY no array vehicleTypes
