@@ -1,7 +1,7 @@
 {
-  "name": "mmo-server",
+  "name": "unity6build",
   "version": "1.0.0",
-  "description": "MMO Game Server with Audio Conversion",
+  "description": "Unity WebGL Multiplayer Game Server",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -9,17 +9,22 @@
   },
   "dependencies": {
     "express": "^4.18.2",
-    "socket.io": "^4.5.4",
-    "uuid": "^9.0.0",
+    "socket.io": "^4.7.2",
+    "cors": "^2.8.5",
     "pg": "^8.11.0",
-    "@solana/web3.js": "^1.87.0",
+    "@solana/web3.js": "^1.78.4",
     "@solana/spl-token": "^0.3.8",
     "bs58": "^5.0.0",
-    "cors": "^2.8.5",
-    "fluent-ffmpeg": "^2.1.2",
-    "wav": "^1.0.2"
+    "uuid": "^9.0.0",
+    "dotenv": "^16.3.1"
   },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
-  }
+  "keywords": [
+    "unity",
+    "webgl",
+    "multiplayer",
+    "socket.io",
+    "solana"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
 }
