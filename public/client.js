@@ -7,6 +7,13 @@ window.addEventListener('load', function() {
     if (listenersRegistered) return;
     listenersRegistered = true;
 
+    // Ensure socket disconnects when page unloads (tab closed, page refreshed, etc.)
+    window.addEventListener('beforeunload', function() {
+        if (socket && socket.connected) {
+            socket.disconnect();
+        }
+    });
+
 	var execInUnity = function(method) {
 		if (!socket.isReady) return;
 		
@@ -280,6 +287,7 @@ window.addEventListener('load', function() {
 	
 		        
 	socket.on('USER_DISCONNECTED', function(id) {
+		console.log('[CLIENT.JS] Received USER_DISCONNECTED for player:', id);
 	
 	     var currentUserAtr = id;
 		 
