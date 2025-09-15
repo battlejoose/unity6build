@@ -1,8 +1,11 @@
 var socket = io() || {};
 socket.isReady = false;
 var account;
+var listenersRegistered = false;
 
 window.addEventListener('load', function() {
+    if (listenersRegistered) return;
+    listenersRegistered = true;
 
 	var execInUnity = function(method) {
 		if (!socket.isReady) return;
