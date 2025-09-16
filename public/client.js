@@ -19,7 +19,7 @@ window.addEventListener('load', function() {
 		
 		var args = Array.prototype.slice.call(arguments, 1);
 		
-		f(window.unityInstance!=null)
+		if(window.unityInstance!=null)
 		{
 		  //fit formats the message to send to the Unity client game, take a look in NetworkManager.cs in Unity
 		  window.unityInstance.SendMessage("NetworkManager", method, args.join(':'));
@@ -411,8 +411,22 @@ window.addEventListener('load', function() {
 
 
 
+// Heartbeat mechanism to keep WebGL connection alive
+function startHeartbeat() {
+    if (socket && socket.connected) {
+        // Send a simple ping every 30 seconds to keep connection alive
+        setInterval(function() {
+            if (socket && socket.connected) {
+                socket.emit('PING', {msg: 'heartbeat'});
+            }
+        }, 30000); // 30 seconds
+    }
+}
+
 window.onload = (e) => {
 	mainFunction(1000);
+    // Start heartbeat after socket is ready
+    setTimeout(startHeartbeat, 2000);
   };
   
   
